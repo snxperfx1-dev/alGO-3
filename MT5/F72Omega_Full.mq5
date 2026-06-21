@@ -380,6 +380,11 @@ struct BrainState
    string tSeq,cyc_MN,cyc_W,cyc_D,cyc_H4,cyc_H1;
    string wr_phaseHistory,dwr_lineage,dwr_resolutionState;
    double netFezHi,netFezLo,netNextPx,netNextAuth;
+   // --- HyperIntelligence (commander) + multi-context arsenal ---
+   int    hyp_oppCount; string hyp_action,hyp_type,hyp_mgmt,hyp_reason; int hyp_dir;
+   double hyp_conviction,hyp_entry,hyp_stop,hyp_target,hyp_sizeMult,hyp_rr;
+   double w_f60,w_erf,w_rie,w_frz,w_mce,w_net;   // live context weights
+   string hyp_oppList;                            // compact list of live opportunities
 };
 
 //============================== Observation =========================
@@ -1231,6 +1236,92 @@ public:
    string ResState(){ return(m_active>=0?m_resState[m_active]:"UNRESOLVED"); }
 };
 
+//============================== OPPORTUNITY ARSENAL =================
+// The algo does not emit one signal. It generates a set of typed
+// opportunities across contexts/timeframes; HyperIntelligence selects.
+enum OPP_TYPE { OPP_NONE,OPP_COMPRESSION,OPP_ROTATION,OPP_NETWORK,OPP_CONTINUATION,OPP_EXHAUSTION,OPP_FLIPZONE,OPP_LIQUIDATION,OPP_EXPANSION };
+struct Opportunity { OPP_TYPE type; int dir; double conviction,entry,stop,target,rr; string mgmt; bool counter; };
+string OppName(OPP_TYPE t){ return(t==OPP_COMPRESSION?"COMPRESSION":t==OPP_ROTATION?"ROTATION":t==OPP_NETWORK?"NETWORK":t==OPP_CONTINUATION?"CONTINUATION":t==OPP_EXHAUSTION?"EXHAUSTION":t==OPP_FLIPZONE?"FLIPZONE":t==OPP_LIQUIDATION?"LIQUIDATION":t==OPP_EXPANSION?"EXPANSION":"NONE"); }
+
+void oppFill(Opportunity &o,OPP_TYPE t,int d,double conv,const BrainState &S,double close,bool scalp,bool counter,string mgmt)
+{
+   double atr=S.atr; o.type=t;o.dir=d;o.conviction=MathMax(0.0,MathMin(100.0,conv));o.counter=counter;o.mgmt=mgmt;
+   o.entry=close;
+   if(d==1) o.stop=(!f72_isna(S.inv_activeStop)&&S.inv_activeStop<close)?S.inv_activeStop:close-atr*1.5;
+   else     o.stop=(!f72_isna(S.inv_activeStop)&&S.inv_activeStop>close)?S.inv_activeStop:close+atr*1.5;
+   double tTrend=d==1?f72_nz(S.te_tp2,close+atr*2.0):f72_nz(S.te_tp2,close-atr*2.0);
+   double tScalp=d==1?f72_nz(S.te_tp1,close+atr*1.0):f72_nz(S.te_tp1,close-atr*1.0);
+   o.target=scalp?tScalp:tTrend;
+   double risk=MathAbs(o.entry-o.stop); o.rr=risk>1e-10?MathAbs(o.target-o.entry)/risk:0.0;
+}
+
+int BuildArsenal(const BrainState &S,double close,Opportunity &arr[])
+{
+   int n=0; ArrayResize(arr,0); string p=S.ie1a_currentPhase; int wd=S.waveDir;
+   // 1 FLIPZONE (classic Demand/Supply return at FRZ, ERF-gated)
+   if((p=="Demand Return"||p=="Supply Return")&&S.erf_entryGate&&wd!=0){ Opportunity o; oppFill(o,OPP_FLIPZONE,wd,S.doe_confidence,S,close,false,false,"Partial+Trail"); ArrayResize(arr,n+1);arr[n]=o;n++; }
+   // 2 COMPRESSION release (persisting compression + convexity shift + FU chain)
+   if(wd!=0&&S.cpState=="PERSISTING"&&((wd==1&&S.bullConvShift)||(wd==-1&&S.bearConvShift))){ double conv=S.cpForce*0.55+S.erf_confidence*0.20+((S.die_anyBullFUActive&&wd==1)||(S.die_anyBearFUActive&&wd==-1)?20.0:0.0); Opportunity o; oppFill(o,OPP_COMPRESSION,wd,conv,S,close,false,false,"Runner"); ArrayResize(arr,n+1);arr[n]=o;n++; }
+   // 3 EXPANSION (released compression + expansion phase + FU progression + alive)
+   if(wd!=0&&(p=="Expansion"||p=="New High"||p=="New Low")&&S.gCompress<50.0&&S.life>=45.0){ double conv=S.life*0.40+S.obs_ExpansionScore*0.30+((S.die_anyBullFUActive&&wd==1)||(S.die_anyBearFUActive&&wd==-1)?20.0:0.0); Opportunity o; oppFill(o,OPP_EXPANSION,wd,conv,S,close,false,false,"Runner"); ArrayResize(arr,n+1);arr[n]=o;n++; }
+   // 4 CONTINUATION (healthy chain + strengthening narrative + HTF aligned)
+   if(wd!=0&&S.chainScope=="healthy"&&S.narrState=="STRENGTHENING"&&S.mce_htfAlignmentScore>=60.0){ double conv=S.mce_htfAlignmentScore*0.40+S.life*0.30+S.narrative*0.30; Opportunity o; oppFill(o,OPP_CONTINUATION,wd,conv,S,close,false,false,"Runner"); ArrayResize(arr,n+1);arr[n]=o;n++; }
+   // 5 ROTATION (control transfer to emerging side — countertrend)
+   if(S.rot_transferProbability>=65.0&&(S.ne_dominantNarrative=="Bullish Rotation"||S.ne_dominantNarrative=="Bearish Rotation")){ int rd=S.ne_dominantNarrative=="Bullish Rotation"?1:-1; double conv=S.rot_transferProbability*0.60+S.rot_emergingWaveStrength*0.40; Opportunity o; oppFill(o,OPP_ROTATION,rd,conv,S,close,true,true,"Scalp"); ArrayResize(arr,n+1);arr[n]=o;n++; }
+   // 6 NETWORK (price pathing to a high-authority node aligned with node bias)
+   if(!f72_isna(S.netNextPx)&&S.pdir!=0&&S.pdir==wd&&MathAbs(close-S.netNextPx)/MathMax(S.atr,1e-10)<6.0){ double conv=MathAbs(S.netPressure)*0.50+MathMin(S.eligNodes*3.0,30.0)+20.0; Opportunity o; oppFill(o,OPP_NETWORK,S.pdir,conv,S,close,false,false,"Partial+Trail"); o.target=S.netNextPx; double risk=MathAbs(o.entry-o.stop); o.rr=risk>1e-10?MathAbs(o.target-o.entry)/risk:0.0; ArrayResize(arr,n+1);arr[n]=o;n++; }
+   // 7 EXHAUSTION (delivered energy + mature convexity + resolved — fade/scalp counter)
+   if(wd!=0&&S.ede_state>=5&&S.convexityMaturity>=55.0&&(S.re_resolutionState=="RESOLVED"||S.re_resolutionState=="PARTIALLY RESOLVED")){ double conv=S.convexityMaturity*0.40+(S.re_resolutionState=="RESOLVED"?40.0:20.0)+S.obs_AbsorptionScore*0.20; Opportunity o; oppFill(o,OPP_EXHAUSTION,-wd,conv,S,close,true,true,"Scalp"); ArrayResize(arr,n+1);arr[n]=o;n++; }
+   // 8 LIQUIDATION (terminal sweep -> reversal toward objective, FU wick validated)
+   if(wd!=0&&(p=="Liquidation"||p=="Terminal Curve")&&S.liqSweepOK){ double conv=60.0+(S.fuw_valid?20.0:0.0)+S.erf_confidence*0.20; Opportunity o; oppFill(o,OPP_LIQUIDATION,wd,conv,S,close,false,false,"Aggressive"); ArrayResize(arr,n+1);arr[n]=o;n++; }
+   return(n);
+}
+
+//============================== HYPERINTELLIGENCE (commander) =======
+// Consumes ALL observers + the arsenal. Weights each by live context,
+// applies the TQE veto, ranks by conviction*weight*asymmetry, and emits
+// the canonical action. NOT Senseei. Senseei stays a read-only cockpit.
+void RunHyper(BrainState &S,Opportunity &arr[],int n,double close)
+{
+   // ---- live context weights (commander, not dictator) ----
+   S.w_f60=MathMax(0.5,MathMin(1.0,0.60+S.cpForce*0.003));
+   S.w_erf=S.re_residualEnergyScore>=50.0?1.30:0.80;
+   S.w_rie=S.rot_transferProbability>=50.0?1.30:0.70;
+   S.w_frz=(S.frz_activeCount>0&&!f72_isna(S.frz_distanceToZone)&&S.frz_distanceToZone<2.0)?1.30:0.80;
+   S.w_mce=S.mce_htfAlignmentScore>=60.0?1.20:(S.mce_htfAlignmentScore<40.0?0.70:1.00);
+   S.w_net=MathMin(1.30,0.60+S.eligNodes*0.04);
+   string list=""; int best=-1; double bestScore=-1;
+   for(int i=0;i<n;i++)
+   {
+      double tw;
+      switch(arr[i].type){
+         case OPP_COMPRESSION: tw=S.w_f60*1.10; break;
+         case OPP_EXPANSION:   tw=S.w_f60; break;
+         case OPP_CONTINUATION:tw=S.w_mce; break;
+         case OPP_ROTATION:    tw=S.w_rie; break;
+         case OPP_NETWORK:     tw=S.w_net; break;
+         case OPP_EXHAUSTION:  tw=S.w_erf; break;
+         case OPP_FLIPZONE:    tw=S.w_frz; break;
+         case OPP_LIQUIDATION: tw=S.w_f60; break;
+         default: tw=1.0; }
+      double asym=MathMax(0.5,MathMin(1.6,arr[i].rr/2.0));
+      double score=arr[i].conviction*tw*asym;
+      // TQE veto: a poor-quality opportunity is suppressed (commander lets TQE say "not worth it")
+      bool veto=(S.tqe_grade=="D")||(arr[i].conviction<InpMinConf);
+      // invalidation veto for trend-aligned entries
+      if(!arr[i].counter&&S.inv_invalidated&&arr[i].dir==S.waveDir) veto=true;
+      list=list+OppName(arr[i].type)+(arr[i].dir==1?"+":"-")+DoubleToString(arr[i].conviction,0)+(veto?"x ":" ");
+      if(!veto&&score>bestScore){ bestScore=score; best=i; }
+   }
+   S.hyp_oppCount=n; S.hyp_oppList=(list==""?"none":list);
+   if(best<0){ S.hyp_action="Wait";S.hyp_type="NONE";S.hyp_dir=0;S.hyp_conviction=0;S.hyp_mgmt="-";S.hyp_sizeMult=0;S.hyp_rr=0;S.hyp_reason="no qualified opportunity";S.hyp_entry=close;S.hyp_stop=F72_NA;S.hyp_target=F72_NA; return; }
+   Opportunity o=arr[best];
+   S.hyp_action=o.dir==1?"Long":"Short"; S.hyp_type=OppName(o.type); S.hyp_dir=o.dir; S.hyp_conviction=o.conviction;
+   S.hyp_entry=o.entry; S.hyp_stop=o.stop; S.hyp_target=o.target; S.hyp_rr=o.rr; S.hyp_mgmt=o.mgmt;
+   S.hyp_sizeMult=MathMax(0.3,MathMin(1.0,o.conviction/100.0*(o.counter?0.6:1.0)));
+   S.hyp_reason=OppName(o.type)+" "+(o.dir==1?"long":"short")+" conv="+DoubleToString(o.conviction,0)+" rr="+DoubleToString(o.rr,2)+" w="+DoubleToString(bestScore,0);
+}
+
 //============================== Brain ===============================
 class Brain
 {
@@ -1316,6 +1407,7 @@ public:
       S.dwr_activeId=m_dwr.ActiveId(); S.dwr_lineage=m_dwr.Lineage(); S.dwr_resolutionState=m_dwr.ResState();
       ComputeSenseei(S,c);
       ComputeParticipantCampaign(S,h,l,c);
+      Opportunity arsenal[]; int oc=BuildArsenal(S,c,arsenal); RunHyper(S,arsenal,oc,c);
       m_S=S; return(true);
    }
 };
@@ -1406,13 +1498,13 @@ public:
       m_file="F72Omega_"+sym+"_decisions.csv";
       m_fh=FileOpen(m_file,FILE_WRITE|FILE_READ|FILE_CSV|FILE_ANSI|FILE_COMMON,';');
       if(m_fh!=INVALID_HANDLE){ FileSeek(m_fh,0,SEEK_END);
-         if(FileSize(m_fh)==0) FileWrite(m_fh,"time","phase","phaseConf","waveDir","fractalDir","fractalScore","resolution","residual","attractor","life","aliveVerdict","chainScope","master","alignment","conflict","threat","confidence","opportunity","intent","timing","action","doe_bias","doe_action","doe_tradeType","grade","entryLow","entryHigh","stop","tp1","tp2","tp3","erfReadiness","erfGate","modelConf","predReliability","expectedNext","rotState","transferProb","mceHTF","mceAlign","narrative","tqeReady","tqeRisk","rrTP1","expPath","attrConv","decSource","campaign","partZone","afeStep","fuAlign","convConf","fuwValid","dwrLineage"); }
+         if(FileSize(m_fh)==0) FileWrite(m_fh,"time","phase","phaseConf","waveDir","fractalDir","fractalScore","resolution","residual","attractor","life","aliveVerdict","chainScope","master","alignment","conflict","threat","confidence","opportunity","intent","timing","action","doe_bias","doe_action","doe_tradeType","grade","entryLow","entryHigh","stop","tp1","tp2","tp3","erfReadiness","erfGate","modelConf","predReliability","expectedNext","rotState","transferProb","mceHTF","mceAlign","narrative","tqeReady","tqeRisk","rrTP1","expPath","attrConv","decSource","campaign","partZone","afeStep","fuAlign","convConf","fuwValid","dwrLineage","hypAction","hypType","hypConv","hypMgmt","hypRR","oppList"); }
    }
    void Deinit(){ if(m_fh!=INVALID_HANDLE) FileClose(m_fh); }
    void Log(const BrainState &S)
    {
       if(m_fh==INVALID_HANDLE) return;
-      FileWrite(m_fh,TimeToString(TimeCurrent(),TIME_DATE|TIME_MINUTES),S.ie1a_currentPhase,DoubleToString(S.ie1a_phaseConfidence,1),(string)S.waveDir,(string)S.fractalStackDir,DoubleToString(S.fractalStackScore,1),S.re_resolutionState,DoubleToString(S.re_residualEnergyScore,1),DoubleToString(S.attractorScore,1),DoubleToString(S.life,1),S.aliveVerdict,S.chainScope,(string)S.master,DoubleToString(S.alignment,1),DoubleToString(S.conflict,1),DoubleToString(S.threat,1),DoubleToString(S.confidence,1),S.opportunity,S.intent,S.timing,S.action,S.doe_bias,S.doe_action,S.doe_tradeType,S.doe_grade,DoubleToString(S.doe_entryLow,_Digits),DoubleToString(S.doe_entryHigh,_Digits),DoubleToString(S.inv_activeStop,_Digits),DoubleToString(S.te_tp1,_Digits),DoubleToString(S.te_tp2,_Digits),DoubleToString(S.te_tp3,_Digits),DoubleToString(S.erf_tradeReadiness,1),(string)S.erf_entryGate,DoubleToString(S.modelConfidence,1),DoubleToString(S.predReliability,1),S.expectedNextPhase,S.rot_state,DoubleToString(S.rot_transferProbability,0),DoubleToString(S.mce_htfAlignmentScore,0),DoubleToString(S.mce_alignmentScore,0),S.ne_dominantNarrative,(string)S.tqe_readiness,S.tqe_riskLevel,DoubleToString(S.te_rr1,2),S.te_expectedPath,(string)S.frz_attractorConvergence,S.trc_decisionSource,S.campaign,S.partZone,(string)S.afe_step,DoubleToString(S.fu_recursiveAlign,0),DoubleToString(S.conv_confidence,0),(string)S.fuw_valid,S.dwr_lineage);
+      FileWrite(m_fh,TimeToString(TimeCurrent(),TIME_DATE|TIME_MINUTES),S.ie1a_currentPhase,DoubleToString(S.ie1a_phaseConfidence,1),(string)S.waveDir,(string)S.fractalStackDir,DoubleToString(S.fractalStackScore,1),S.re_resolutionState,DoubleToString(S.re_residualEnergyScore,1),DoubleToString(S.attractorScore,1),DoubleToString(S.life,1),S.aliveVerdict,S.chainScope,(string)S.master,DoubleToString(S.alignment,1),DoubleToString(S.conflict,1),DoubleToString(S.threat,1),DoubleToString(S.confidence,1),S.opportunity,S.intent,S.timing,S.action,S.doe_bias,S.doe_action,S.doe_tradeType,S.doe_grade,DoubleToString(S.doe_entryLow,_Digits),DoubleToString(S.doe_entryHigh,_Digits),DoubleToString(S.inv_activeStop,_Digits),DoubleToString(S.te_tp1,_Digits),DoubleToString(S.te_tp2,_Digits),DoubleToString(S.te_tp3,_Digits),DoubleToString(S.erf_tradeReadiness,1),(string)S.erf_entryGate,DoubleToString(S.modelConfidence,1),DoubleToString(S.predReliability,1),S.expectedNextPhase,S.rot_state,DoubleToString(S.rot_transferProbability,0),DoubleToString(S.mce_htfAlignmentScore,0),DoubleToString(S.mce_alignmentScore,0),S.ne_dominantNarrative,(string)S.tqe_readiness,S.tqe_riskLevel,DoubleToString(S.te_rr1,2),S.te_expectedPath,(string)S.frz_attractorConvergence,S.trc_decisionSource,S.campaign,S.partZone,(string)S.afe_step,DoubleToString(S.fu_recursiveAlign,0),DoubleToString(S.conv_confidence,0),(string)S.fuw_valid,S.dwr_lineage,S.hyp_action,S.hyp_type,DoubleToString(S.hyp_conviction,0),S.hyp_mgmt,DoubleToString(S.hyp_rr,2),S.hyp_oppList);
       FileFlush(m_fh);
    }
    void Print(const BrainState &S)
@@ -1432,6 +1524,7 @@ Journal       g_journal;
 string        g_sym;
 int           g_lastEntryBar;
 bool          g_scaledTP1;
+string        g_mgmt="-";
 
 int OnInit()
 {
@@ -1449,51 +1542,61 @@ void OnTick()
    g_port.RollDay();
    if(!g_brain.OnNewBar()) return;
    BrainState S=g_brain.State();
-   if(InpVerboseJournal) g_journal.Print(S);
+   if(InpVerboseJournal){ g_journal.Print(S);
+      PrintFormat("[HYPER] action=%s type=%s dir=%d conv=%.0f rr=%.2f mgmt=%s sz=%.2f | wF60=%.2f wERF=%.2f wRIE=%.2f wFRZ=%.2f wMCE=%.2f wNET=%.2f | opps[%d]: %s | %s",
+         S.hyp_action,S.hyp_type,S.hyp_dir,S.hyp_conviction,S.hyp_rr,S.hyp_mgmt,S.hyp_sizeMult,
+         S.w_f60,S.w_erf,S.w_rie,S.w_frz,S.w_mce,S.w_net,S.hyp_oppCount,S.hyp_oppList,S.hyp_reason); }
    g_journal.Log(S);
    if(!InpEnableTrading) return;
 
    int posDir=g_exec.PositionDir(InpMagic);
    int barIndex=Bars(g_sym,InpExecTF);
 
+   // ---- POSITION INTELLIGENCE: the trade is never over (continuous management) ----
    if(posDir!=0)
    {
       POS_ACTION pa=g_posIntel.Decide(S,posDir);
-      if(pa==POS_EXIT){ g_exec.CloseAll(InpMagic); return; }
-      if(pa==POS_REVERSE){ g_exec.CloseAll(InpMagic); posDir=0; }
+      if(pa==POS_EXIT){ g_exec.CloseAll(InpMagic); g_mgmt="-"; return; }
+      if(pa==POS_REVERSE){ g_exec.CloseAll(InpMagic); g_mgmt="-"; posDir=0; }   // fall through to re-arm
       else
       {
-         if(pa==POS_REDUCE && !g_scaledTP1){ g_exec.PartialClose(InpMagic,InpTP1ClosePct/100.0); g_scaledTP1=true; }
+         // management style governs trailing + partials
+         double tp1pct = g_mgmt=="Scalp"?100.0 : g_mgmt=="Aggressive"?60.0 : g_mgmt=="Runner"?0.0 : InpTP1ClosePct;
+         if(pa==POS_REDUCE && !g_scaledTP1 && tp1pct>0){ g_exec.PartialClose(InpMagic,tp1pct/100.0); g_scaledTP1=true; }
          double newSL=!f72_isna(S.inv_activeStop)?S.inv_activeStop:0.0;
          double newTP=!f72_isna(S.te_tp2)?S.te_tp2:0.0;
          g_exec.ModifyStop(InpMagic,newSL,newTP);
-         if(InpUseTP1 && !g_scaledTP1 && !f72_isna(S.te_tp1))
+         if(InpUseTP1 && !g_scaledTP1 && tp1pct>0 && !f72_isna(S.te_tp1))
          {
             double bid=SymbolInfoDouble(g_sym,SYMBOL_BID),ask=SymbolInfoDouble(g_sym,SYMBOL_ASK);
             bool hitT1=posDir==1?bid>=S.te_tp1:ask<=S.te_tp1;
-            if(hitT1){ g_exec.PartialClose(InpMagic,InpTP1ClosePct/100.0); g_scaledTP1=true; }
+            if(hitT1){ g_exec.PartialClose(InpMagic,tp1pct/100.0); g_scaledTP1=true; }
          }
          return;
       }
    }
 
+   // ---- RISK LAYER: overrides the commander (Omega's inheritance) ----
    if(g_port.DailyLossHit()) return;
    if(g_port.OpenCount(InpMagic)>=InpMaxPositions) return;
    if(g_risk.OpenRiskPct(InpMagic)>=InpMaxRiskPctTotal) return;
    if(barIndex-g_lastEntryBar<InpBaseLockBars) return;
 
-   int dir=0; if(S.doe_action=="Long")dir=1; if(S.doe_action=="Short")dir=-1;
+   // ---- HYPERINTELLIGENCE decision (canonical), not Senseei, not raw DOE ----
+   int dir=0; if(S.hyp_action=="Long")dir=1; if(S.hyp_action=="Short")dir=-1;
    if(dir==0) return;
-   if(f72_isna(S.inv_activeStop)) return;
+   if(f72_isna(S.hyp_stop)) return;
    double entry=dir==1?SymbolInfoDouble(g_sym,SYMBOL_ASK):SymbolInfoDouble(g_sym,SYMBOL_BID);
-   double stop=S.inv_activeStop;
+   double stop=S.hyp_stop;
    if((dir==1&&stop>=entry)||(dir==-1&&stop<=entry)) return;
-   double tp=!f72_isna(S.te_tp2)?S.te_tp2:(dir==1?entry+(entry-stop)*2.0:entry-(stop-entry)*2.0);
-   double riskPct=InpRiskPctPerTrade*MathMax(0.5,MathMin(1.0,S.doe_confidence/100.0+0.25));
+   double tp=!f72_isna(S.hyp_target)?S.hyp_target:(dir==1?entry+(entry-stop)*2.0:entry-(stop-entry)*2.0);
+   double riskPct=InpRiskPctPerTrade*MathMax(0.3,MathMin(1.0,S.hyp_sizeMult));
    double lots=g_risk.LotsFor(entry,stop,riskPct);
    if(lots<=0) return;
-   string cmt=StringFormat("F72 %s %s g%s c%.0f",S.doe_action,S.intent,S.doe_grade,S.doe_confidence);
+   g_mgmt=S.hyp_mgmt;
+   string cmt=StringFormat("F72 %s %s c%.0f rr%.1f %s",S.hyp_action,S.hyp_type,S.hyp_conviction,S.hyp_rr,S.hyp_mgmt);
    if(g_exec.Open(dir,lots,stop,tp,cmt)){ g_lastEntryBar=barIndex; g_scaledTP1=false;
-      PrintFormat("[F72 OMEGA] ENTER %s %.2f @ %.5f sl=%.5f tp=%.5f | %s",(dir==1?"LONG":"SHORT"),lots,entry,stop,tp,cmt); }
+      PrintFormat("[F72 OMEGA] ENTER %s %s %.2f @ %.5f sl=%.5f tp=%.5f mgmt=%s | %s",
+         (dir==1?"LONG":"SHORT"),S.hyp_type,lots,entry,stop,tp,S.hyp_mgmt,S.hyp_reason); }
 }
 //+------------------------------------------------------------------+
