@@ -41,6 +41,8 @@ input int    InpFuLookback         = 3;
 input double InpFuMinBodyRatio     = 0.6;
 input double InpFuMinWickRatio     = 0.25;
 input int    InpFuMaxBars          = 75;
+input double InpFuwWick             = 0.4;
+input int    InpFuwLook             = 3;
 input double InpErfReadyResW       = 0.25;
 input double InpErfReadyResidW     = 0.20;
 input double InpErfReadyConfW      = 0.15;
@@ -369,6 +371,15 @@ struct BrainState
    double eae_tertiaryAttractorPrice,eae_tertiaryAttractorScore;
    int    wr_activeWaveId,wr_parentWaveId,wr_rootWaveId,wr_waveDepth,dwr_activeId;
    string trc_decisionSource,trc_waveChain,trc_confidenceBreakdown;
+   // --- full 1:1 port additions ---
+   bool   die_anyBullFUActive,die_anyBearFUActive; int die_activeFUCount;
+   double fuw_tip,fuw_mid,fuw_bandHi,fuw_bandLo,fuw_strength,fuw_futureMagnet; int fuw_dir; bool fuw_valid,fuw_inductionExpected;
+   int    afe_step; string afe_upperFlipRole; double afe_origin,afe_target; bool afe_continuation;
+   double fu_recursiveAlign,fu_winTarget,conv_seekPx,conv_confidence; string fu_winSrc,conv_seekTf;
+   string campaign,location,compRegime,partZone,interfTx; int expDepth;
+   string tSeq,cyc_MN,cyc_W,cyc_D,cyc_H4,cyc_H1;
+   string wr_phaseHistory,dwr_lineage,dwr_resolutionState;
+   double netFezHi,netFezLo,netNextPx,netNextAuth;
 };
 
 //============================== Observation =========================
@@ -717,11 +728,19 @@ public:
    }
 };
 
-//============================== TimeIntel ===========================
+//============================== TimeIntel (Engine 8.0 full) =========
 class TimeIntel
 {
 private:
    string m_sym; int bias(ENUM_TIMEFRAMES tf,double close){ double op=iOpen(m_sym,tf,0);return(close>op?1:close<op?-1:0); }
+   double elapsed(ENUM_TIMEFRAMES tf){ double ps=(double)PeriodSeconds(tf); return(ps>0?MathMin(1.0,MathMax(0.0,(double)(TimeCurrent()-iTime(m_sym,tf,0))/ps)):0.0); }
+   string cycState(ENUM_TIMEFRAMES tf,double close)
+   {
+      bool Ht=iHigh(m_sym,tf,0)>iHigh(m_sym,tf,1), Lt=iLow(m_sym,tf,0)<iLow(m_sym,tf,1);
+      double el=elapsed(tf); int b=bias(tf,close);
+      string st=(Ht&&Lt)?"DUAL DONE":Ht?"HIGH DONE":Lt?"LOW DONE":el<0.15?"OPENING":el<0.6?"EXPANDING":el<0.9?"MID CYCLE":"TERMINAL";
+      return((b==1?"UP ":b==-1?"DN ":"-- ")+st);
+   }
 public:
    void Init(string sym){ m_sym=sym; }
    void Update(BrainState &S,double close)
@@ -733,6 +752,12 @@ public:
       double h1H=iHigh(m_sym,PERIOD_H1,0),h1L=iLow(m_sym,PERIOD_H1,0); double pos=(close-h1L)/MathMax(h1H-h1L,_Point);
       double lowProb=(h1Lt&&!h1Ht)?30.0:(h1Ht&&!h1Lt)?70.0:MathRound(pos*100.0);
       S.h1Timing=(h1Ht&&h1Lt)?"COMPLETION":lowProb>=55?"LOW FIRST":lowProb<=45?"HIGH FIRST":"BALANCED";
+      // per-cycle states (completion/asymmetry sub-engines)
+      S.cyc_MN=cycState(PERIOD_MN1,close); S.cyc_W=cycState(PERIOD_W1,close); S.cyc_D=cycState(PERIOD_D1,close);
+      S.cyc_H4=cycState(PERIOD_H4,close); S.cyc_H1=cycState(PERIOD_H1,close);
+      // temporal path / sequence
+      int bH4=bias(PERIOD_H4,close),bD=bias(PERIOD_D1,close),bW=bias(PERIOD_W1,close);
+      S.tSeq=(!h1Lt?"take H1 low":!h1Ht?"take H1 high":"H1 done")+" -> H4 "+(bH4==1?"up":"down")+" -> D "+(bD==1?"highs":"lows")+" -> W "+(bW==1?"highs":"lows");
    }
 };
 
@@ -770,9 +795,15 @@ public:
       for(int i=0;i<7;i++){ double tip,mid,sc;int dir; if(detect(m_tf[i],InpWickFrac,InpFuStructLook,tip,mid,dir,sc)){ if(netBias==0)netBias=dir; if(f72_isna(m_lastTip[i])||MathAbs(tip-m_lastTip[i])>_Point){addNode(tip,dir,sc,m_wtv[i]);m_lastTip[i]=tip;} } }
       double ema50=close; if(netBias==0){ double e=0;MqlRates r[]; if(CopyRates(m_sym,_Period,1,50,r)>=50){for(int i=0;i<50;i++)e+=r[i].close;e/=50.0;ema50=e;} netBias=close>ema50?1:close<ema50?-1:0; }
       S.netBias=netBias; double atr=S.atr; double bullAuth=0,bearAuth=0; int elig=0;
+      double fezHi=F72_NA,fezLo=F72_NA,fezHiA=0,fezLoA=0,nextPx=F72_NA,nextAuth=0,nextDist=DBL_MAX;
       for(int i=0;i<m_n;i++){ if(m_state[i]!=2){ double np=m_px[i];int nd=m_dir[i]; if(nd==-1?close>np:close<np)m_state[i]=2; else { if(MathAbs(close-np)<atr*0.25)m_rev[i]++; } }
-         if(m_state[i]!=2&&authority(i)>=InpAuthMin){ elig++; if(m_dir[i]==1)bullAuth+=authority(i); else bearAuth+=authority(i); } }
+         if(m_state[i]!=2&&authority(i)>=InpAuthMin){ elig++; double a=authority(i); double np=m_px[i];
+            if(m_dir[i]==1)bullAuth+=a; else bearAuth+=a;
+            if(np>close&&a>fezHiA){fezHi=np;fezHiA=a;} if(np<close&&a>fezLoA){fezLo=np;fezLoA=a;}
+            bool ahead=netBias==1?np>close:np<close;
+            if(ahead){ double d=MathAbs(close-np); if(d<nextDist){nextDist=d;nextPx=np;nextAuth=a;} } } }
       S.eligNodes=elig; S.netPressure=(bullAuth+bearAuth)>0?(bullAuth-bearAuth)/(bullAuth+bearAuth)*100.0:0.0; S.pdir=S.netPressure>12?1:S.netPressure<-12?-1:0;
+      S.netFezHi=fezHi; S.netFezLo=fezLo; S.netNextPx=nextPx; S.netNextAuth=nextAuth;
    }
 };
 
@@ -943,6 +974,263 @@ void ComputeSenseei(BrainState &S,double close)
    S.trc_confidenceBreakdown="IE1A:"+DoubleToString(S.ie1a_phaseConfidence,0)+" ERF:"+DoubleToString(S.erf_confidence,0)+" FRZ:"+DoubleToString(S.tqe_frzQuality,0)+" MCE:"+DoubleToString(S.mce_htfAlignmentScore,0)+" RE:"+DoubleToString(S.re_recursiveCompletionScore,0)+" LIQ:"+DoubleToString(S.tqe_liqQuality,0);
 }
 
+//============================== FUOrderBlockEngine (LETRA) ==========
+// Gap-confirmed + same-bar FU order blocks with full lifecycle:
+// Fresh -> Active/Interacting/Exhausted/Invalidated. Feeds DIE confluence.
+class FUOrderBlockEngine
+{
+private:
+   double m_top[],m_bot[]; int m_birth[],m_dir[]; string m_state[]; int m_n;
+   double m_o[],m_h[],m_l[],m_c[]; int m_nb,m_barIndex;
+   double gO(int b){return(b<m_nb?m_o[b]:F72_NA);} double gC(int b){return(b<m_nb?m_c[b]:F72_NA);}
+   double gH(int b){return(b<m_nb?m_h[b]:F72_NA);} double gL(int b){return(b<m_nb?m_l[b]:F72_NA);}
+   double priorHi(int from,int len){double m=-DBL_MAX;for(int i=from;i<from+len&&i<m_nb;i++)m=MathMax(m,m_h[i]);return(m);}
+   double priorLo(int from,int len){double m=DBL_MAX;for(int i=from;i<from+len&&i<m_nb;i++)m=MathMin(m,m_l[i]);return(m);}
+public:
+   void Init(){ m_n=0;m_nb=0;m_barIndex=0;ArrayResize(m_top,0);ArrayResize(m_bot,0);ArrayResize(m_birth,0);ArrayResize(m_dir,0);ArrayResize(m_state,0);ArrayResize(m_o,0);ArrayResize(m_h,0);ArrayResize(m_l,0);ArrayResize(m_c,0); }
+   void pushBar(double o,double h,double l,double c){int keep=InpFuMaxBars+6;
+      ArrayResize(m_o,m_nb+1);ArrayResize(m_h,m_nb+1);ArrayResize(m_l,m_nb+1);ArrayResize(m_c,m_nb+1);
+      for(int i=m_nb;i>0;i--){m_o[i]=m_o[i-1];m_h[i]=m_h[i-1];m_l[i]=m_l[i-1];m_c[i]=m_c[i-1];}
+      m_o[0]=o;m_h[0]=h;m_l[0]=l;m_c[0]=c;m_nb++;
+      if(m_nb>keep){ArrayResize(m_o,keep);ArrayResize(m_h,keep);ArrayResize(m_l,keep);ArrayResize(m_c,keep);m_nb=keep;} m_barIndex++; }
+   void Update(BrainState &S,double o,double h,double l,double c)
+   {
+      pushBar(o,h,l,c); double atr=S.atr;
+      double pRng=gH(1)-gL(1),pBody=MathAbs(gC(1)-gO(1)),pUpW=gH(1)-MathMax(gO(1),gC(1)),pLoW=MathMin(gO(1),gC(1))-gL(1);
+      double pBodyR=pRng>1e-10?pBody/pRng:0,pUpR=pRng>1e-10?pUpW/pRng:0,pLoR=pRng>1e-10?pLoW/pRng:0;
+      bool bearGap=!f72_isna(gC(1))&&o<gC(1)-atr*0.05, bullGap=!f72_isna(gC(1))&&o>gC(1)+atr*0.05;
+      double pHi2=priorHi(2,InpFuLookback),pLo2=priorLo(2,InpFuLookback);
+      bool liqLeftBear=(!f72_isna(gH(1))&&gH(1)>=pHi2*0.998), liqLeftBull=(!f72_isna(gL(1))&&gL(1)<=pLo2*1.002);
+      bool isBearFU_prev=pRng>atr*0.5&&pBodyR>=InpFuMinBodyRatio&&gC(1)<gO(1)&&pUpR>=InpFuMinWickRatio&&liqLeftBear&&bearGap;
+      bool isBullFU_prev=pRng>atr*0.5&&pBodyR>=InpFuMinBodyRatio&&gC(1)>gO(1)&&pLoR>=InpFuMinWickRatio&&liqLeftBull&&bullGap;
+      double rng=h-l,body=MathAbs(c-o),upW=h-MathMax(o,c),loW=MathMin(o,c)-l;
+      bool inZone=!f72_isna(S.flipTop)&&!f72_isna(S.flipBot)&&c>=S.flipBot*0.98&&c<=S.flipTop*1.02;
+      bool isBullFU=rng>atr*0.5&&(rng>0?body/rng:0)>=InpFuMinBodyRatio&&c>o&&(rng>0?loW/rng:0)>=InpFuMinWickRatio&&inZone;
+      bool isBearFU=rng>atr*0.5&&(rng>0?body/rng:0)>=InpFuMinBodyRatio&&c<o&&(rng>0?upW/rng:0)>=InpFuMinWickRatio&&inZone;
+      // spawn
+      if(isBearFU_prev){ int s=m_n;ArrayResize(m_top,s+1);ArrayResize(m_bot,s+1);ArrayResize(m_birth,s+1);ArrayResize(m_dir,s+1);ArrayResize(m_state,s+1);m_top[s]=MathMax(gO(1),gC(1));m_bot[s]=gL(1);m_birth[s]=m_barIndex-1;m_dir[s]=-1;m_state[s]="Fresh";m_n++; }
+      if(isBullFU_prev){ int s=m_n;ArrayResize(m_top,s+1);ArrayResize(m_bot,s+1);ArrayResize(m_birth,s+1);ArrayResize(m_dir,s+1);ArrayResize(m_state,s+1);m_top[s]=gH(1);m_bot[s]=MathMin(gO(1),gC(1));m_birth[s]=m_barIndex-1;m_dir[s]=1;m_state[s]="Fresh";m_n++; }
+      if(isBullFU){ int s=m_n;ArrayResize(m_top,s+1);ArrayResize(m_bot,s+1);ArrayResize(m_birth,s+1);ArrayResize(m_dir,s+1);ArrayResize(m_state,s+1);m_top[s]=h;m_bot[s]=MathMin(o,c);m_birth[s]=m_barIndex;m_dir[s]=1;m_state[s]="Fresh";m_n++; }
+      if(isBearFU){ int s=m_n;ArrayResize(m_top,s+1);ArrayResize(m_bot,s+1);ArrayResize(m_birth,s+1);ArrayResize(m_dir,s+1);ArrayResize(m_state,s+1);m_top[s]=MathMax(o,c);m_bot[s]=l;m_birth[s]=m_barIndex;m_dir[s]=-1;m_state[s]="Fresh";m_n++; }
+      // lifecycle pass
+      for(int i=m_n-1;i>=0;i--){ int age=m_barIndex-m_birth[i]; double ft=m_top[i],fb=m_bot[i]; int fd=m_dir[i]; string st=m_state[i];
+         string ns=st;
+         if(age<=3) ns="Fresh"; else if(c>ft&&fd==1) ns="Exhausted"; else if(c<fb&&fd==-1) ns="Exhausted"; else if(c<=ft&&c>=fb) ns="Interacting"; else if((fd==1&&c<fb-atr*0.5)||(fd==-1&&c>ft+atr*0.5)) ns="Invalidated"; else if(age>3) ns="Active";
+         m_state[i]=ns;
+         if(ns=="Invalidated"||age>=InpFuMaxBars){ for(int j=i;j<m_n-1;j++){m_top[j]=m_top[j+1];m_bot[j]=m_bot[j+1];m_birth[j]=m_birth[j+1];m_dir[j]=m_dir[j+1];m_state[j]=m_state[j+1];} m_n--;ArrayResize(m_top,m_n);ArrayResize(m_bot,m_n);ArrayResize(m_birth,m_n);ArrayResize(m_dir,m_n);ArrayResize(m_state,m_n); } }
+      // active tally
+      bool anyBull=false,anyBear=false; int cnt=0;
+      for(int i=0;i<m_n;i++){ string st=m_state[i]; if(st=="Active"||st=="Fresh"||st=="Interacting"){ cnt++; if(m_dir[i]==1)anyBull=true; else anyBear=true; } }
+      S.die_anyBullFUActive=anyBull; S.die_anyBearFUActive=anyBear; S.die_activeFUCount=cnt;
+   }
+};
+
+//============================== FUWickEngine (1A.8/.9/.9B/.10) ======
+// FU Wick Capture Authority + induction band + future magnet, the AFE
+// 6-step flip-echo machine, 6-TF f_fuPool convergence, FU conversation.
+class FUWickEngine
+{
+private:
+   double m_h[],m_l[],m_o[],m_c[]; int m_nb;
+   // chart fuw_ state
+   double m_tip,m_bH,m_bL,m_mid,m_m38,m_m62,m_leftPool,m_strength; int m_dir,m_bar; bool m_valid; int m_barIndex;
+   // AFE state
+   int m_afeStep,m_afeOriginDir; double m_afeOrigin,m_afeUpper,m_afeLower,m_afeDest,m_afeTarget; string m_afeRole; bool m_afeSelfRet,m_afeCont;
+   // 6 TF pools: 0=W 1=D 2=H4 3=H1 4=M15 5=M5
+   ENUM_TIMEFRAMES m_tf[6]; datetime m_tfBar[6];
+   double m_pPool[6],m_pMid[6],m_pTip[6],m_pScore[6]; int m_pDir[6]; bool m_pValid[6],m_pConf[6]; double m_pbH[6],m_pbL[6];
+   double gH(int b){return(b<m_nb?m_h[b]:F72_NA);} double gL(int b){return(b<m_nb?m_l[b]:F72_NA);}
+   double hi(int from,int len){double m=-DBL_MAX;for(int i=from;i<from+len&&i<m_nb;i++)m=MathMax(m,m_h[i]);return(m);}
+   double lo(int from,int len){double m=DBL_MAX;for(int i=from;i<from+len&&i<m_nb;i++)m=MathMin(m,m_l[i]);return(m);}
+   void poolTF(int k)
+   {
+      datetime t1=iTime(NULL,m_tf[k],1); if(t1==0||t1==m_tfBar[k]) return; m_tfBar[k]=t1;
+      MqlRates r[]; if(CopyRates(NULL,m_tf[k],1,5,r)<5) return; int n=ArraySize(r);
+      double H=r[n-1].high,L=r[n-1].low,O=r[n-1].open,C=r[n-1].close,rng=MathMax(H-L,1e-10);
+      double pHi=MathMax(r[1].high,MathMax(r[2].high,r[3].high)),pLo=MathMin(r[1].low,MathMin(r[2].low,r[3].low));
+      bool bear=H>pHi&&C<pHi&&(H-MathMax(O,C))/rng>=InpFuwWick;
+      bool bull=L<pLo&&C>pLo&&(MathMin(O,C)-L)/rng>=InpFuwWick;
+      double atr=0; for(int i=1;i<n;i++) atr+=MathAbs(r[i].close-r[i-1].close); atr=MathMax(atr/(n-1),1e-10);
+      if(bear){ m_pDir[k]=-1;m_pTip[k]=H;m_pbH[k]=MathMax(O,C);m_pbL[k]=MathMin(O,C);m_pPool[k]=pHi;m_pValid[k]=true;m_pConf[k]=false; }
+      else if(bull){ m_pDir[k]=1;m_pTip[k]=L;m_pbH[k]=MathMax(O,C);m_pbL[k]=MathMin(O,C);m_pPool[k]=pLo;m_pValid[k]=true;m_pConf[k]=false; }
+      if(m_pValid[k]&&m_pDir[k]==-1&&!m_pConf[k]&&C<m_pbL[k]) m_pConf[k]=true;
+      if(m_pValid[k]&&m_pDir[k]==1&&!m_pConf[k]&&C>m_pbH[k]) m_pConf[k]=true;
+      if(m_pDir[k]==-1&&!f72_isna(m_pTip[k])) m_pMid[k]=m_pbH[k]+(m_pTip[k]-m_pbH[k])*0.5;
+      else if(m_pDir[k]==1&&!f72_isna(m_pTip[k])) m_pMid[k]=m_pTip[k]+(m_pbL[k]-m_pTip[k])*0.5;
+      double wk=(m_pDir[k]==-1)?(m_pTip[k]-m_pbH[k])/atr:(m_pDir[k]==1)?(m_pbL[k]-m_pTip[k])/atr:0.0;
+      m_pScore[k]=(m_pConf[k]?30.0:0.0)+MathMin(25.0,wk*15.0)+20.0+(wk>1.0?15.0:0.0)+(wk>1.5?10.0:0.0);
+   }
+public:
+   void Init(){ m_nb=0;m_barIndex=0;m_tip=F72_NA;m_bH=F72_NA;m_bL=F72_NA;m_mid=F72_NA;m_m38=F72_NA;m_m62=F72_NA;m_leftPool=F72_NA;m_strength=F72_NA;m_dir=0;m_bar=0;m_valid=false;
+      m_afeStep=0;m_afeOriginDir=0;m_afeOrigin=F72_NA;m_afeUpper=F72_NA;m_afeLower=F72_NA;m_afeDest=F72_NA;m_afeTarget=F72_NA;m_afeRole="-";m_afeSelfRet=false;m_afeCont=false;
+      ArrayResize(m_h,0);ArrayResize(m_l,0);ArrayResize(m_o,0);ArrayResize(m_c,0);
+      ENUM_TIMEFRAMES t[6]={PERIOD_W1,PERIOD_D1,PERIOD_H4,PERIOD_H1,PERIOD_M15,PERIOD_M5};
+      for(int k=0;k<6;k++){m_tf[k]=t[k];m_tfBar[k]=0;m_pValid[k]=false;m_pConf[k]=false;m_pDir[k]=0;m_pPool[k]=F72_NA;m_pMid[k]=F72_NA;m_pTip[k]=F72_NA;m_pScore[k]=0;m_pbH[k]=F72_NA;m_pbL[k]=F72_NA;} }
+   void pushBar(double o,double h,double l,double c){int keep=MathMax(InpFuwLook+5,10);
+      ArrayResize(m_o,m_nb+1);ArrayResize(m_h,m_nb+1);ArrayResize(m_l,m_nb+1);ArrayResize(m_c,m_nb+1);
+      for(int i=m_nb;i>0;i--){m_o[i]=m_o[i-1];m_h[i]=m_h[i-1];m_l[i]=m_l[i-1];m_c[i]=m_c[i-1];}
+      m_o[0]=o;m_h[0]=h;m_l[0]=l;m_c[0]=c;m_nb++;
+      if(m_nb>keep){ArrayResize(m_o,keep);ArrayResize(m_h,keep);ArrayResize(m_l,keep);ArrayResize(m_c,keep);m_nb=keep;} m_barIndex++; }
+   void Update(BrainState &S,double o,double h,double l,double c,double prevSwingHigh,double prevSwingLow)
+   {
+      pushBar(o,h,l,c); double atr=S.atr; double rng=MathMax(h-l,1e-10);
+      double pHi=hi(1,InpFuwLook),pLo=lo(1,InpFuwLook);
+      bool bear=h>pHi&&c<pHi&&(h-MathMax(o,c))/rng>=InpFuwWick;
+      bool bull=l<pLo&&c>pLo&&(MathMin(o,c)-l)/rng>=InpFuwWick;
+      if(bear){ m_dir=-1;m_tip=h;m_bH=MathMax(o,c);m_bL=MathMin(o,c);m_mid=m_bH+(m_tip-m_bH)*0.5;m_m38=m_bH+(m_tip-m_bH)*0.38;m_m62=m_bH+(m_tip-m_bH)*0.62;m_leftPool=pHi;m_bar=m_barIndex;m_valid=false;m_strength=MathMin(100.0,(m_tip-m_bH)/atr*40.0+40.0); }
+      else if(bull){ m_dir=1;m_tip=l;m_bH=MathMax(o,c);m_bL=MathMin(o,c);m_mid=m_tip+(m_bL-m_tip)*0.5;m_m38=m_tip+(m_bL-m_tip)*0.38;m_m62=m_tip+(m_bL-m_tip)*0.62;m_leftPool=pLo;m_bar=m_barIndex;m_valid=false;m_strength=MathMin(100.0,(m_bL-m_tip)/atr*40.0+40.0); }
+      if(!m_valid&&m_dir==-1&&!f72_isna(m_bL)&&m_barIndex>m_bar&&c<m_bL) m_valid=true;
+      if(!m_valid&&m_dir==1&&!f72_isna(m_bH)&&m_barIndex>m_bar&&c>m_bH) m_valid=true;
+      double bandHi=(f72_isna(m_m38)||f72_isna(m_m62))?F72_NA:MathMax(m_m38,m_m62);
+      double bandLo=(f72_isna(m_m38)||f72_isna(m_m62))?F72_NA:MathMin(m_m38,m_m62);
+      bool inducExp=m_valid&&!f72_isna(bandHi)&&c<=bandHi&&c>=bandLo;
+      double magnet=m_valid?m_leftPool:F72_NA;
+      S.fuw_tip=m_tip;S.fuw_mid=m_mid;S.fuw_bandHi=bandHi;S.fuw_bandLo=bandLo;S.fuw_dir=m_dir;S.fuw_valid=m_valid;S.fuw_strength=m_strength;S.fuw_futureMagnet=magnet;S.fuw_inductionExpected=inducExp;
+      // AFE re-anchor on freshly validated FU
+      if(m_valid&&(f72_isna(m_afeOrigin)||m_tip!=m_afeOrigin)){ m_afeOrigin=m_tip;m_afeOriginDir=m_dir;m_afeUpper=m_mid;m_afeLower=m_dir==-1?f72_nz(prevSwingLow,m_bL):f72_nz(prevSwingHigh,m_bH);m_afeStep=1;m_afeRole="Destination";m_afeDest=m_mid;m_afeTarget=F72_NA;m_afeSelfRet=false;m_afeCont=false; }
+      if(m_afeStep>=1&&!f72_isna(m_afeOrigin)&&m_afeOriginDir!=0){ bool bd=m_afeOriginDir==-1;
+         if(m_afeStep==1&&(bd?c<f72_nz(m_bL,m_afeOrigin):c>f72_nz(m_bH,m_afeOrigin))){ m_afeStep=2;m_afeDest=m_afeUpper; }
+         if(m_afeStep==2&&!f72_isna(m_afeUpper)&&(bd?h>=m_afeUpper:l<=m_afeUpper)){ m_afeStep=3;m_afeSelfRet=true;m_afeDest=m_afeLower; }
+         if(m_afeStep==3&&!f72_isna(m_afeLower)&&(bd?l<=m_afeLower:h>=m_afeLower)){ m_afeStep=4;m_afeDest=m_afeOrigin;m_afeTarget=m_afeOrigin;m_afeRole="Liquidity"; }
+         if(m_afeStep==4&&!f72_isna(m_afeOrigin)&&(bd?h>=m_afeOrigin:l<=m_afeOrigin)){ m_afeStep=5;m_afeCont=true; } }
+      S.afe_step=m_afeStep;S.afe_upperFlipRole=m_afeRole;S.afe_origin=m_afeOrigin;S.afe_target=m_afeTarget;S.afe_continuation=m_afeCont;
+      // 6-TF pools
+      for(int k=0;k<6;k++) poolTF(k);
+      int active=0; for(int k=0;k<6;k++) if(m_pValid[k]) active++;
+      S.fu_recursiveAlign=(double)active/6.0*100.0;
+      double winT=F72_NA; string winS="-"; 
+      for(int k=0;k<6;k++){ if(m_pValid[k]&&!f72_isna(m_pPool[k])){ winT=m_pPool[k]; winS=(k==0?"W":k==1?"D":k==2?"H4":k==3?"H1":k==4?"M15":"M5")+" FU Left Pool"; break; } }
+      if(f72_isna(winT)&&m_valid&&!f72_isna(magnet)){ winT=magnet; winS="FU Left Pool"; }
+      S.fu_winTarget=winT; S.fu_winSrc=winS;
+      // conversation: seek highest TF valid tip on bias side
+      int bias=S.waveDir!=0?S.waveDir:S.fractalStackDir; double seekPx=F72_NA; string seekTf="-"; double seekSc=0;
+      if(bias!=0) for(int k=0;k<6;k++){ if(m_pValid[k]&&!f72_isna(m_pTip[k])&&(bias==1?m_pTip[k]>c:m_pTip[k]<c)){ seekPx=m_pTip[k];seekTf=(k==0?"W":k==1?"D":k==2?"H4":k==3?"H1":k==4?"M15":"M5");seekSc=m_pScore[k]; break; } }
+      S.conv_seekPx=seekPx;S.conv_seekTf=seekTf;
+      S.conv_confidence=(bias==0||f72_isna(seekPx))?0.0:MathMin(100.0,seekSc*0.7+S.fu_recursiveAlign*0.3);
+   }
+};
+
+//============================== Participant + Campaign (V60 F72) =====
+void ComputeParticipantCampaign(BrainState &S,double high,double low,double close)
+{
+   double atr=S.atr; string p=S.ie1a_currentPhase;
+   double htfZone=S.netNextPx; double distHTF=!f72_isna(htfZone)?MathAbs(htfZone-close):F72_NA;
+   double curveBudget=!f72_isna(distHTF)?MathMin(100.0,distHTF/MathMax(atr*8.0,1e-10)*100.0):F72_NA;
+   double gComp=S.gCompress;
+   S.compRegime=gComp>=75?"FAILURE SWING":gComp>=50?"COMPRESSED":gComp>=25?"MEDIUM":"WIDE";
+   bool atHTF=!f72_isna(distHTF)&&distHTF<atr*1.5;
+   bool nearHTF=!f72_isna(curveBudget)&&curveBudget<25.0;
+   bool termPhase=strHas(p,"Induction")||strHas(p,"Liquidation")||strHas(p,"Terminal")||strHas(p,"HTF Flip")||strHas(p,"Return");
+   S.campaign=(atHTF||termPhase)?"TERMINAL":"EXPANSION";
+   S.location=(atHTF||termPhase)?"INSIDE HTF ZONE":nearHTF?"APPROACHING HTF ZONE":(strHas(p,"Transition")||strHas(p,"Retracement"))?"TRANSITIONING":"BUILDING";
+   S.expDepth=S.campaign=="EXPANSION"?0:(int)MathMax(1,MathMin(4,1+MathRound(gComp/33.0)));
+   int ownerDir=S.ownerDir!=0?S.ownerDir:S.master;
+   // Participant bands on the owner curve's leg (extreme -> origin)
+   double pcHi=ownerDir==1?f72_nz(S.cycleHigh,high):f72_nz(S.cycleLow,low);
+   double pcLo=ownerDir==1?f72_nz(S.point4OriginLow,low):f72_nz(S.point4OriginHigh,high);
+   double rng=(!f72_isna(pcHi)&&!f72_isna(pcLo))?pcHi-pcLo:F72_NA;
+   double retrAbs=(!f72_isna(rng)&&MathAbs(rng)>1e-10)?MathAbs(pcHi-close)/MathAbs(rng):F72_NA;
+   S.partZone=f72_isna(retrAbs)?"-":retrAbs<0.55?"pre-0.618 clean":retrAbs<0.66?"0.618 participants in":retrAbs<0.74?"0.70 interference":retrAbs<0.82?"0.786 heavy":"FLIP true induction";
+   bool inPartBand=!f72_isna(retrAbs)&&retrAbs>=0.55;
+   bool displacing=inPartBand&&(S.bullImpulse||S.bearImpulse);
+   bool interfDom=strHas(p,"Transition")||strHas(p,"Retracement")||strHas(p,"Return")||strHas(p,"Induction")||strHas(p,"Liquidation")||strHas(p,"Terminal");
+   S.interfTx=f72_isna(retrAbs)?"-":interfDom?"DOMINANT recursive owns":displacing?"active displacement":"absorbed parent continues";
+}
+
+//============================== MCEEngine (9-TF, full f_se) =========
+// Full Multi-Timeframe Consensus: reuses Engine1A rungs M1/M5/M15/H1/H4
+// and adds dedicated f_se instances on M30/D/W/MN for a true 9-TF stack.
+class MCEEngine
+{
+private:
+   string m_sym; ENUM_TIMEFRAMES m_tf[4]; StructureEngine *m_eng[4]; SE_Out m_out[4]; datetime m_lastBar[4];
+   void feed(int k)
+   {
+      int avail=Bars(m_sym,m_tf[k]); if(avail<3) return; datetime t1=iTime(m_sym,m_tf[k],1); if(t1==0) return;
+      if(m_lastBar[k]==0){ int back=MathMin(avail-1,400);
+         for(int i=back;i>=1;i--){ MqlRates r[]; if(CopyRates(m_sym,m_tf[k],i,1,r)==1) m_eng[k].ProcessNewBar(r[0].open,r[0].high,r[0].low,r[0].close,m_out[k]); }
+         m_lastBar[k]=t1; }
+      else if(t1>m_lastBar[k]){ int sh=1; while(sh<avail&&iTime(m_sym,m_tf[k],sh)>m_lastBar[k]) sh++;
+         for(int i=sh-1;i>=1;i--){ MqlRates r[]; if(CopyRates(m_sym,m_tf[k],i,1,r)==1) m_eng[k].ProcessNewBar(r[0].open,r[0].high,r[0].low,r[0].close,m_out[k]); }
+         m_lastBar[k]=t1; }
+   }
+   int dirOf(int k){ double inv=m_out[k].inv; int fb=m_out[k].dir; double c=iClose(m_sym,m_tf[k],1); if(f72_isna(inv))return(fb); return(c>inv?1:c<inv?-1:fb); }
+public:
+   MCEEngine(){ for(int k=0;k<4;k++){m_eng[k]=NULL;m_lastBar[k]=0;} }
+   void Init(string sym){ m_sym=sym; ENUM_TIMEFRAMES t[4]={PERIOD_M30,PERIOD_D1,PERIOD_W1,PERIOD_MN1};
+      for(int k=0;k<4;k++){ m_tf[k]=t[k]; m_eng[k]=new StructureEngine; m_eng[k].Init(InpPivotLen,InpEffLen,InpAtrLen,InpEffThresh,InpDispThresh,InpConvMult,InpImpulseAtrMult,InpChochBufferATR); m_lastBar[k]=0; } }
+   void Deinit(){ for(int k=0;k<4;k++) if(CheckPointer(m_eng[k])==POINTER_DYNAMIC) delete m_eng[k]; }
+  ~MCEEngine(){ Deinit(); }
+   void Update(BrainState &S,int &ldir[])
+   {
+      for(int k=0;k<4;k++) feed(k);
+      int m30=dirOf(0),dD=dirOf(1),wW=dirOf(2),mN=dirOf(3);
+      // 9-TF stack ordered low->high: M1,M5,M15,M30,H1,H4,D,W,MN
+      int tf[9]; tf[0]=ldir[0];tf[1]=ldir[2];tf[2]=ldir[3];tf[3]=m30;tf[4]=ldir[4];tf[5]=ldir[5];tf[6]=dD;tf[7]=wW;tf[8]=mN;
+      int L0=S.waveDir; int agree=0; for(int i=0;i<9;i++) if(tf[i]==L0&&L0!=0) agree++;
+      S.mce_alignmentScore=(double)agree/9.0*100.0; S.mce_dir=L0;
+      int htfA=0; for(int i=4;i<9;i++) if(tf[i]==L0&&L0!=0) htfA++; S.mce_htfAlignmentScore=(double)htfA/5.0*100.0;
+      int mtfA=0; for(int i=2;i<5;i++) if(tf[i]==L0&&L0!=0) mtfA++; S.mce_mtfAlignmentScore=(double)mtfA/3.0*100.0;
+      int exA=0;  for(int i=0;i<3;i++) if(tf[i]==L0&&L0!=0) exA++;  S.mce_execAlignmentScore=(double)exA/3.0*100.0;
+      S.mce_htfNarrative=(S.mce_htfAlignmentScore>=80&&L0==1)?"HTF Bullish Continuation":(S.mce_htfAlignmentScore>=80&&L0==-1)?"HTF Bearish Continuation":(S.mce_htfAlignmentScore>=60&&S.rot_transferProbability<40)?"HTF Trend Intact":(S.mce_htfAlignmentScore<40)?"HTF Contested - No Clear Bias":(S.mce_htfAlignmentScore>=50&&S.rot_transferProbability>=60)?"HTF Rotation Developing":"HTF Developing";
+      string p=S.ie1a_currentPhase;
+      S.mce_execNarrative=(p=="Demand Return"&&S.mce_execAlignmentScore>=60)?"Execution Aligned - Long Entry Window":(p=="Supply Return"&&S.mce_execAlignmentScore>=60)?"Execution Aligned - Short Entry Window":(S.mce_execAlignmentScore<40)?"Execution Conflict - Wait":"Execution Developing";
+   }
+};
+
+//============================== WaveRegistry (V72 Part 13) ==========
+class WaveRegistry
+{
+private:
+   int m_id[],m_parent[],m_root[],m_birth[],m_death[],m_depth[]; double m_peakE[],m_resScore[]; string m_phaseHist[]; int m_n,m_nextId,m_active,m_bi;
+public:
+   void Init(){ m_n=0;m_nextId=1;m_active=-1;m_bi=0; ArrayResize(m_id,0);ArrayResize(m_parent,0);ArrayResize(m_root,0);ArrayResize(m_birth,0);ArrayResize(m_death,0);ArrayResize(m_depth,0);ArrayResize(m_peakE,0);ArrayResize(m_resScore,0);ArrayResize(m_phaseHist,0); }
+   void Tick(){ m_bi++; }
+   void Spawn(string phase,int depth,int parentId,double energy)
+   {
+      int s=m_n; ArrayResize(m_id,s+1);ArrayResize(m_parent,s+1);ArrayResize(m_root,s+1);ArrayResize(m_birth,s+1);ArrayResize(m_death,s+1);ArrayResize(m_depth,s+1);ArrayResize(m_peakE,s+1);ArrayResize(m_resScore,s+1);ArrayResize(m_phaseHist,s+1);
+      int id=m_nextId; m_nextId++;
+      m_id[s]=id; m_parent[s]=parentId; m_root[s]=(depth==0||parentId<=0)?id:(m_active>=0?m_root[m_active]:id);
+      m_birth[s]=m_bi; m_death[s]=-1; m_depth[s]=depth; m_peakE[s]=energy; m_resScore[s]=0.0; m_phaseHist[s]=phase;
+      m_active=s;
+   }
+   void OnBar(string phase,double energy)
+   {
+      if(m_active<0) return;
+      if(energy>m_peakE[m_active]) m_peakE[m_active]=energy;
+      // append phase if changed (tail differs)
+      string h=m_phaseHist[m_active]; int p=StringLen(h)-StringLen(phase);
+      if(p<0||StringSubstr(h,p)!=phase) m_phaseHist[m_active]=h+">"+phase;
+   }
+   void Death(double resScore){ if(m_active>=0){ m_death[m_active]=m_bi; m_resScore[m_active]=resScore; } }
+   int  ActiveId(){ return(m_active>=0?m_id[m_active]:0); }
+   int  ParentId(){ return(m_active>=0?m_parent[m_active]:0); }
+   int  RootId(){ return(m_active>=0?m_root[m_active]:0); }
+   int  Depth(){ return(m_active>=0?m_depth[m_active]:0); }
+   string PhaseHistory(){ return(m_active>=0?m_phaseHist[m_active]:""); }
+};
+
+//============================== DeliveryWaveRegistry (V72 Part 14) ===
+class DeliveryWaveRegistry
+{
+private:
+   int m_id[],m_parent[],m_root[],m_start[],m_end[],m_cycle[]; double m_energy[]; string m_resState[],m_lineage[]; int m_n,m_nextId,m_active,m_bi;
+public:
+   void Init(){ m_n=0;m_nextId=1;m_active=-1;m_bi=0; ArrayResize(m_id,0);ArrayResize(m_parent,0);ArrayResize(m_root,0);ArrayResize(m_start,0);ArrayResize(m_end,0);ArrayResize(m_cycle,0);ArrayResize(m_energy,0);ArrayResize(m_resState,0);ArrayResize(m_lineage,0); }
+   void Tick(){ m_bi++; }
+   void Spawn(int rootWaveId,double energy,int entryCycle)
+   {
+      int s=m_n; ArrayResize(m_id,s+1);ArrayResize(m_parent,s+1);ArrayResize(m_root,s+1);ArrayResize(m_start,s+1);ArrayResize(m_end,s+1);ArrayResize(m_cycle,s+1);ArrayResize(m_energy,s+1);ArrayResize(m_resState,s+1);ArrayResize(m_lineage,s+1);
+      int id=m_nextId; m_nextId++; int parent=m_active>=0?m_id[m_active]:0;
+      m_id[s]=id; m_parent[s]=parent; m_root[s]=rootWaveId; m_start[s]=m_bi; m_end[s]=-1; m_cycle[s]=entryCycle; m_energy[s]=energy; m_resState[s]="UNRESOLVED";
+      m_lineage[s]=(string)rootWaveId+">"+(parent>0?(string)parent+">":"")+(string)id; m_active=s;
+   }
+   void OnBar(string resState){ if(m_active>=0){ m_resState[m_active]=resState; if(resState=="RESOLVED"&&m_end[m_active]<0) m_end[m_active]=m_bi; } }
+   int    ActiveId(){ return(m_active>=0?m_id[m_active]:0); }
+   string Lineage(){ return(m_active>=0?m_lineage[m_active]:""); }
+   string ResState(){ return(m_active>=0?m_resState[m_active]:"UNRESOLVED"); }
+};
+
 //============================== Brain ===============================
 class Brain
 {
@@ -950,8 +1238,9 @@ private:
    string m_sym; ENUM_TIMEFRAMES m_tf;
    Engine1A m_e1a; LiquidityEngine m_liq; WaveIntelEngine m_wi; SpawnEngine m_spawn; DIEEngine m_die;
    FRZEngine m_frz; CurveOrganism m_curve; TimeIntel m_time; NetworkEngine m_net;
+   FUOrderBlockEngine m_fuob; FUWickEngine m_fuw; MCEEngine m_mce; WaveRegistry m_wr; DeliveryWaveRegistry m_dwr;
    datetime m_lastBar; int m_structBias; double m_pConvMat; BrainState m_S;
-   int m_wrNextId,m_wrActive,m_wrParent,m_wrRoot,m_wrDepth,m_prevDir,m_prevEdeState,m_dwrNextId,m_dwrActive;
+   int m_prevDir,m_prevEdeState;
    void m1flags(bool &eW,bool &cE,bool &iE,bool &lE,bool &aE)
    {
       eW=false;cE=false;iE=false;lE=false;aE=false; MqlRates r[]; int need=InpEffLen+5; if(CopyRates(m_sym,PERIOD_M1,1,need,r)<need) return; int n=ArraySize(r);
@@ -967,9 +1256,9 @@ private:
 public:
    void Init(string sym,ENUM_TIMEFRAMES tf)
    {
-      m_sym=sym;m_tf=tf;m_lastBar=0;m_structBias=0;m_pConvMat=0;
-      m_wrNextId=1;m_wrActive=0;m_wrParent=0;m_wrRoot=0;m_wrDepth=0;m_prevDir=0;m_prevEdeState=0;m_dwrNextId=1;m_dwrActive=0;
+      m_sym=sym;m_tf=tf;m_lastBar=0;m_structBias=0;m_pConvMat=0;m_prevDir=0;m_prevEdeState=0;
       m_e1a.Init(sym,tf);m_liq.Init();m_wi.Init();m_spawn.Init();m_die.Init();m_frz.Init();m_curve.Init();m_time.Init(sym);m_net.Init(sym);
+      m_fuob.Init();m_fuw.Init();m_mce.Init(sym);m_wr.Init();m_dwr.Init();
       m_S.flipTop=F72_NA;m_S.flipBot=F72_NA;m_S.point4OriginHigh=F72_NA;m_S.point4OriginLow=F72_NA;m_S.cycleHigh=F72_NA;m_S.cycleLow=F72_NA;
       m_S.inducZoneLow=F72_NA;m_S.inducZoneHigh=F72_NA;m_S.originToExtreme=F72_NA;m_S.availableSpace=F72_NA;m_S.eae_primaryAttractorPrice=F72_NA;m_S.eae_secondaryAttractorPrice=F72_NA;m_S.inv_activeStop=F72_NA;
       m_S.re_resolutionState="UNRESOLVED";m_S.ie1a_currentPhase="Point 4 Origin";
@@ -1003,25 +1292,30 @@ public:
       m_wi.Update(S,c); m_pConvMat=S.convexityMaturity;
       bool bullCH=(canon.ch==1),bearCH=(canon.ch==-1);
       m_spawn.Update(S,o,h,l,c,m_e1a.CanonDir(),canon.p4h,canon.p4l,bullCH,bearCH);
+      m_fuob.Update(S,o,h,l,c);
       int dir_tf1=m_e1a.ldir[3],dir_tf2=m_e1a.ldir[4]; int htfAlign=(dir_tf1+dir_tf2)>0?1:(dir_tf1+dir_tf2)<0?-1:0;
       bool m1ew,m1ce,m1ie,m1le,m1ae; m1flags(m1ew,m1ce,m1ie,m1le,m1ae);
-      bool dirFUactive=(S.frz_activeCount>0&&S.frz_bestDir==S.direction);
+      bool dirFUactive=(S.die_anyBullFUActive&&S.waveDir==1)||(S.die_anyBearFUActive&&S.waveDir==-1);
       m_die.Update(S,c,htfAlign,dir_tf1,dir_tf2,m1ew,m1ce,m1ie,m1le,m1ae,dirFUactive);
       m_frz.Update(S,o,h,l,c);
       m_curve.Update(S,canon,h,l,c);
       m_time.Update(S,c);
       m_net.Update(S,c);
-      ComputeMCE(S,m_e1a.ldir,m_sym);
+      m_fuw.Update(S,o,h,l,c,canon.prSH,canon.prSL);
+      m_mce.Update(S,m_e1a.ldir);
+      m_wr.Tick(); m_dwr.Tick();
       if(S.direction!=0 && (S.direction!=m_prevDir || S.recursiveJustFired)){
-         m_wrParent=m_wrActive; m_wrActive=m_wrNextId; m_wrNextId++;
-         m_wrDepth=S.recursiveJustFired?S.waveDepth:0;
-         m_wrRoot=S.recursiveJustFired?(m_wrRoot>0?m_wrRoot:m_wrActive):m_wrActive;
+         int par=m_wr.ActiveId(); m_wr.Death(S.re_recursiveCompletionScore);
+         m_wr.Spawn(S.ie1a_currentPhase,S.recursiveJustFired?S.waveDepth:0,par,S.ede_expansionEnergy);
       }
       m_prevDir=S.direction;
-      S.wr_activeWaveId=m_wrActive;S.wr_parentWaveId=m_wrParent;S.wr_rootWaveId=m_wrRoot;S.wr_waveDepth=m_wrDepth;
-      if(S.ede_state==4 && m_prevEdeState!=4){ m_dwrActive=m_dwrNextId; m_dwrNextId++; }
-      m_prevEdeState=S.ede_state; S.dwr_activeId=m_dwrActive;
+      m_wr.OnBar(S.ie1a_currentPhase,S.ede_expansionEnergy);
+      S.wr_activeWaveId=m_wr.ActiveId();S.wr_parentWaveId=m_wr.ParentId();S.wr_rootWaveId=m_wr.RootId();S.wr_waveDepth=m_wr.Depth();S.wr_phaseHistory=m_wr.PhaseHistory();
+      if(S.ede_state==4 && m_prevEdeState!=4) m_dwr.Spawn(m_wr.RootId(),S.ede_expansionEnergy,S.entryCycle);
+      m_prevEdeState=S.ede_state; m_dwr.OnBar(S.re_resolutionState);
+      S.dwr_activeId=m_dwr.ActiveId(); S.dwr_lineage=m_dwr.Lineage(); S.dwr_resolutionState=m_dwr.ResState();
       ComputeSenseei(S,c);
+      ComputeParticipantCampaign(S,h,l,c);
       m_S=S; return(true);
    }
 };
@@ -1112,13 +1406,13 @@ public:
       m_file="F72Omega_"+sym+"_decisions.csv";
       m_fh=FileOpen(m_file,FILE_WRITE|FILE_READ|FILE_CSV|FILE_ANSI|FILE_COMMON,';');
       if(m_fh!=INVALID_HANDLE){ FileSeek(m_fh,0,SEEK_END);
-         if(FileSize(m_fh)==0) FileWrite(m_fh,"time","phase","phaseConf","waveDir","fractalDir","fractalScore","resolution","residual","attractor","life","aliveVerdict","chainScope","master","alignment","conflict","threat","confidence","opportunity","intent","timing","action","doe_bias","doe_action","doe_tradeType","grade","entryLow","entryHigh","stop","tp1","tp2","tp3","erfReadiness","erfGate","modelConf","predReliability","expectedNext","rotState","transferProb","mceHTF","mceAlign","narrative","tqeReady","tqeRisk","rrTP1","expPath","attrConv","decSource"); }
+         if(FileSize(m_fh)==0) FileWrite(m_fh,"time","phase","phaseConf","waveDir","fractalDir","fractalScore","resolution","residual","attractor","life","aliveVerdict","chainScope","master","alignment","conflict","threat","confidence","opportunity","intent","timing","action","doe_bias","doe_action","doe_tradeType","grade","entryLow","entryHigh","stop","tp1","tp2","tp3","erfReadiness","erfGate","modelConf","predReliability","expectedNext","rotState","transferProb","mceHTF","mceAlign","narrative","tqeReady","tqeRisk","rrTP1","expPath","attrConv","decSource","campaign","partZone","afeStep","fuAlign","convConf","fuwValid","dwrLineage"); }
    }
    void Deinit(){ if(m_fh!=INVALID_HANDLE) FileClose(m_fh); }
    void Log(const BrainState &S)
    {
       if(m_fh==INVALID_HANDLE) return;
-      FileWrite(m_fh,TimeToString(TimeCurrent(),TIME_DATE|TIME_MINUTES),S.ie1a_currentPhase,DoubleToString(S.ie1a_phaseConfidence,1),(string)S.waveDir,(string)S.fractalStackDir,DoubleToString(S.fractalStackScore,1),S.re_resolutionState,DoubleToString(S.re_residualEnergyScore,1),DoubleToString(S.attractorScore,1),DoubleToString(S.life,1),S.aliveVerdict,S.chainScope,(string)S.master,DoubleToString(S.alignment,1),DoubleToString(S.conflict,1),DoubleToString(S.threat,1),DoubleToString(S.confidence,1),S.opportunity,S.intent,S.timing,S.action,S.doe_bias,S.doe_action,S.doe_tradeType,S.doe_grade,DoubleToString(S.doe_entryLow,_Digits),DoubleToString(S.doe_entryHigh,_Digits),DoubleToString(S.inv_activeStop,_Digits),DoubleToString(S.te_tp1,_Digits),DoubleToString(S.te_tp2,_Digits),DoubleToString(S.te_tp3,_Digits),DoubleToString(S.erf_tradeReadiness,1),(string)S.erf_entryGate,DoubleToString(S.modelConfidence,1),DoubleToString(S.predReliability,1),S.expectedNextPhase,S.rot_state,DoubleToString(S.rot_transferProbability,0),DoubleToString(S.mce_htfAlignmentScore,0),DoubleToString(S.mce_alignmentScore,0),S.ne_dominantNarrative,(string)S.tqe_readiness,S.tqe_riskLevel,DoubleToString(S.te_rr1,2),S.te_expectedPath,(string)S.frz_attractorConvergence,S.trc_decisionSource);
+      FileWrite(m_fh,TimeToString(TimeCurrent(),TIME_DATE|TIME_MINUTES),S.ie1a_currentPhase,DoubleToString(S.ie1a_phaseConfidence,1),(string)S.waveDir,(string)S.fractalStackDir,DoubleToString(S.fractalStackScore,1),S.re_resolutionState,DoubleToString(S.re_residualEnergyScore,1),DoubleToString(S.attractorScore,1),DoubleToString(S.life,1),S.aliveVerdict,S.chainScope,(string)S.master,DoubleToString(S.alignment,1),DoubleToString(S.conflict,1),DoubleToString(S.threat,1),DoubleToString(S.confidence,1),S.opportunity,S.intent,S.timing,S.action,S.doe_bias,S.doe_action,S.doe_tradeType,S.doe_grade,DoubleToString(S.doe_entryLow,_Digits),DoubleToString(S.doe_entryHigh,_Digits),DoubleToString(S.inv_activeStop,_Digits),DoubleToString(S.te_tp1,_Digits),DoubleToString(S.te_tp2,_Digits),DoubleToString(S.te_tp3,_Digits),DoubleToString(S.erf_tradeReadiness,1),(string)S.erf_entryGate,DoubleToString(S.modelConfidence,1),DoubleToString(S.predReliability,1),S.expectedNextPhase,S.rot_state,DoubleToString(S.rot_transferProbability,0),DoubleToString(S.mce_htfAlignmentScore,0),DoubleToString(S.mce_alignmentScore,0),S.ne_dominantNarrative,(string)S.tqe_readiness,S.tqe_riskLevel,DoubleToString(S.te_rr1,2),S.te_expectedPath,(string)S.frz_attractorConvergence,S.trc_decisionSource,S.campaign,S.partZone,(string)S.afe_step,DoubleToString(S.fu_recursiveAlign,0),DoubleToString(S.conv_confidence,0),(string)S.fuw_valid,S.dwr_lineage);
       FileFlush(m_fh);
    }
    void Print(const BrainState &S)
