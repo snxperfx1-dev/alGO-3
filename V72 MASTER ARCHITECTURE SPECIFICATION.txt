@@ -1,0 +1,1086 @@
+V72 MASTER ARCHITECTURE SPECIFICATION
+Principal Quantitative Systems Architect Review
+Based on: V71 Full Architectural Audit Report + Audit 10 (Trader Output & Display Compliance) + V71-4-ERF__4_.pine (5,790 lines) Classification: Complete Market Intelligence & Trade Decision System Date: June 2026
+
+PREAMBLE — DESIGN PHILOSOPHY
+V71 is an architecturally sound wave diagnostic engine with an underdeveloped decision layer. Engine 1A is perfect and untouched. The V72 mandate is integration, not reinvention: every proposed component reuses existing computed variables, elevating them from display artifacts into decision inputs.
+The three laws of V72:
+1. Engine 1A owns lifecycle. Nothing in V72 assigns, modifies, or competes with ie1a_currentPhase.
+2. Every new engine consumes outputs — it does not duplicate computation.
+3. Every variable must have a named downstream consumer. If it has no consumer, it does not exist.
+
+PART 1 — GAP ANALYSIS
+1.1 What Is Complete (Preserve Unchanged)
+Component	Status	Evidence
+Engine 1A — Lifecycle Authority	100% PASS	Audit 1: sole canonical phase assignment, full 3D validation, BOS as evidence only
+Phase boolean framework (ie1a_cond_*)	Complete	All 14 phases require Structure ∧ Momentum ∧ Physics simultaneously
+EDE — Energy Dissipation Engine	Complete	ede_state, ede_dissipationProgress, ede_expansionEnergy all functional
+RE — Resolution Engine	Complete	RESOLVED / PARTIALLY RESOLVED / UNRESOLVED states correct
+RE — Recursive Completion	Complete	re_expectedCycles, re_completedCycles, re_recursiveCompletionScore functional
+EAE — Primary Attractor	Complete (calc)	eae_primaryAttractorPrice, Score, Label all calculated correctly
+FRZ — Creation + Classification	Complete	Score, Tier, Class, lifecycle states all functional
+FRZ — Dashboard display	Complete	Panel bottom_left renders all zones
+L0/L1/L2/L3 layer structure	Complete	Multi-timeframe observation architecture functional
+erf_suppressRotation → safeToReset	Complete	Real decision-level integration — preserve exactly
+Entry signals gating on IE1A phase	Complete	longSignal/shortSignal require Demand Return / Supply Return
+BOS as scored evidence	Complete	BOS-1/BOS-2 contribute weighted points, never binary gates
+1.2 What Is Partially Complete (Extend, Do Not Replace)
+Component	Current State	Gap	V72 Action
+EAE Secondary Attractor	Calculated (price + score), never displayed or consumed	No dashboard row, no target use	Surface as TP1 in Target Engine
+ERF confidence (erf_confidence)	Calculated and displayed	Never gates entry signals or modifies trade quality	Wire into Trade Qualification Engine
+re_resolutionState	Calculated and displayed	Does not modify entry quality or confidence thresholds	Gate ERF Trade Readiness Score
+FRZ decision integration	Display-only	Not consumed by entry, narrative, or target engines	Wire frz_bestScore / frz_bestOwner into TQE and Target Engine
+Multi-timeframe traceability	4 levels (L0–L3)	No Monthly/Weekly/Daily/H4/H1 chain	Extend Consensus Engine to 9 timeframes via request inputs
+Wave traceability	var state variables	No waveId, parentWaveId, rootWaveId	Implement Wave Registry with sequential IDs
+Die_entryScore	Calculated	Does not include ERF or FRZ components	Extend with ERF and FRZ inputs
+Rotation engine	erf_suppressRotation exists	No dedicated rotation intelligence outputs	Build Rotation Intelligence Engine (Engine 2)
+FRZ prioritization	Sorted newest-first	Best-score zone not promoted	Sort by score; pin T1 zones
+1.3 What Is Missing (Build New)
+Component	Severity	Trading Impact
+Target Engine (TP1/TP2/TP3 from attractors)	SEVERITY 1	Critical — no exit level exists anywhere
+Invalidation Engine (stop-loss price levels)	SEVERITY 1	Critical — trader cannot plan risk
+Entry zone / price (not just signal bar)	SEVERITY 1	Critical — no entry price exists
+DeliveryWave Registry (typed object with parent/child)	SEVERITY 2	High — recursion approximated only
+ERF gating of longSignal/shortSignal	SEVERITY 2	High — entry signals ignore energy state
+EAE tertiary / extended attractor	SEVERITY 3	Medium — TP3 has no source
+FRZ ↔ ERF unification	SEVERITY 2	High — two systems describing same energy, disconnected
+Trade Qualification Engine	SEVERITY 2	High — no unified A+/A/B/C/D quality model
+Narrative Engine (formal)	SEVERITY 2	High — die_narrativeDir is IE1A phase relay, not derived market story
+Decision Output Engine (DOE)	SEVERITY 1	Critical — no single unified recommendation object
+Wave Registry (waveId / parentWaveId / rootWaveId)	SEVERITY 2	High — no programmatic traceability
+FRZ residual energy + resolution scores	SEVERITY 3	Medium — zones carry no energy metadata
+FRZ distance-to-zone field	SEVERITY 3	Medium — trader cannot see proximity
+Advanced Mode separation	SEVERITY 3	Medium — 88% of fields are diagnostic, never gated
+1.4 Gap Priority Ranking
+Rank 1 — Trading Impact (blocks all decision use)
+1. Target Engine — no TP exists anywhere
+2. Entry price/zone — longSignal fires but no price is specified
+3. Invalidation Engine — no stop-loss level calculated
+4. ERF gating of entry signals
+5. DOE — no unified output object
+Rank 2 — Architectural Impact (structural integrity) 6. FRZ ↔ ERF unification 7. Trade Qualification Engine 8. Wave Registry (waveId system) 9. DeliveryWave Registry 10. Rotation Intelligence Engine (Engine 2)
+Rank 3 — Research / Analytical Impact 11. Narrative Engine (formal) 12. Multi-Timeframe Consensus Engine (9 levels) 13. EAE tertiary attractor 14. FRZ residual energy scores 15. Advanced Mode dashboard separation
+
+PART 2 — AUTHORITY BOUNDARIES
+Each engine has one and only one domain of authority. No engine may read from, write to, or replicate the authority of another.
+2.1 Authority Table
+Engine	Sole Authority	Forbidden
+IE1A	Lifecycle phase (ie1a_currentPhase). The only entity that may assign a lifecycle phase. All other engines are consumers.	May not be overridden. May not be bypassed. No other engine may assign lifecycle variables.
+Rotation Intelligence Engine (RIE / Engine 2)	Control transfer probability between wave participants. Detects when dominant control is weakening and an opposing participant is gaining strength. Owns: rot_pressure, rot_controlStability, rot_transferProbability, rot_emergingWaveStrength.	May NOT assign lifecycle phases. May NOT determine whether a wave is in Retracement or Expansion — that is IE1A's domain.
+Multi-Timeframe Consensus Engine (MCE)	Alignment score across the 9-timeframe stack (M1→Monthly). Owns: mce_htfNarrative, mce_mtfNarrative, mce_execNarrative, mce_alignmentScore, per-timeframe mce_tf[n]_* objects.	May NOT assign lifecycle phases to any timeframe. May NOT override L1/L2/L3 classifiers. It reads them.
+Narrative Engine (NE)	The single dominant market story. Owns: ne_dominantNarrative, ne_narrativeStrength, ne_narrativeConflict. Only one narrative may be active.	May NOT assign lifecycle. May NOT produce a trade recommendation. Narrative ≠ Direction.
+Trade Qualification Engine (TQE)	Unified trade quality score and gate. Owns: tqe_readiness, tqe_quality, tqe_riskLevel, tqe_grade.	May NOT produce a market bias. May NOT produce entry price. It gates and scores — it does not recommend.
+Decision Output Engine (DOE)	The final unified recommendation object. Owns the only actionable output the trader acts on: doe_bias, doe_action, doe_confidence, doe_tradeType, doe_entryZone, doe_entryTrigger, doe_entryQuality.	May NOT compute physics scores, lifecycle phases, or rotation probabilities. It synthesizes — it does not compute raw signals.
+Target Engine (TE)	Conversion of attractors into TP1/TP2/TP3 price levels. Owns: te_tp1, te_tp2, te_tp3, te_targetQuality, te_targetConfidence, te_expectedPath.	May NOT create attractors. EAE creates attractors; TE consumes them.
+Invalidation Engine (IE2)	Stop-loss price level calculation and failure detection. Owns: inv_bullOriginPrice, inv_bearOriginPrice, inv_demandFailPrice, inv_supplyFailPrice, inv_activeStop, inv_invalidated.	May NOT assign lifecycle. IE1A determines when origin is broken; IE2 calculates the price level of that break in advance.
+Wave Registry (WR)	Formal Wave object with identity fields. Owns: waveId, parentWaveId, rootWaveId, birthBar, deathBar, phaseHistory[], energyHistory[], integrityHistory[], children[].	May NOT compute lifecycle phases. Stores and retrieves wave identity — does not compute wave state.
+DeliveryWave Registry (DWR)	Formal DeliveryWave object. Owns: dw_waveId, dw_parentWaveId, dw_rootWaveId, dw_children[], dw_energy, dw_resolutionState, dw_startBar, dw_endBar, dw_recursiveLineage[].	May NOT compute energy state — EDE computes energy; DWR stores delivery lineage.
+Dashboard	Display only. No variable assignment, no computation, no decision logic. Renders outputs of all engines in the correct mode (Standard / Advanced).	May NOT compute anything. Any variable computed inside dashboard rendering is an architectural violation.
+2.2 Authority Conflict Prevention Rules
+* Any variable that contains the word "Phase" in its name may only be assigned by IE1A.
+* If two engines produce a variable of the same semantic type (e.g., a "narrative direction string"), they must have distinct names, distinct purposes, and the Dashboard must resolve which one surfaces in Standard Mode. Default rule: DOE output surfaces in Standard; all others in Advanced.
+* The three competing directive strings (directiveStr, liveDirective, execDirective) in V71 are an authority conflict. In V72: DOE owns doe_action exclusively. liveDirective and execDirective are renamed to rie_controlDirective and mce_execReadiness and moved to Advanced Mode.
+
+PART 3 — ROTATION INTELLIGENCE ENGINE (Engine 2 / RIE)
+3.1 Purpose
+Detect the probability that market control is transferring from one participant to another. This is NOT a lifecycle transition — it is a pressure gauge of emerging opposition. IE1A will detect the transition when it occurs (via BOS scoring); RIE detects the preconditions before they fully manifest.
+3.2 Design
+Inputs (all from existing V71 variables — no new computation):
+* obs_ExpansionScore — directional expansion strength
+* obs_DecayScore — counter-directional pressure
+* obs_AbsorptionScore — exhaustion indicator
+* obs_LiquidityScore — liquidity pool proximity
+* efficiency — momentum efficiency ratio
+* convexityScore — curvature maturity
+* ede_state — energy dissipation stage
+* re_resolutionState — energy resolution status
+* ie1a_currentPhase — current lifecycle stage (read-only)
+* erf_suppressRotation — existing rotation suppression flag (preserved)
+* direction — structural direction
+Outputs (new variables — RIE authority only):
+
+
+pine
+float rot_pressure           // 0–100: current opposing force magnitude
+float rot_controlStability   // 0–100: how stable is current direction (inverse of pressure)
+float rot_transferProbability // 0–100: probability control transfers within ~5 bars
+float rot_emergingWaveStrength // 0–100: strength of the emerging opposing wave
+string rot_state             // "STABLE" | "SOFTENING" | "CONTESTED" | "TRANSFER_IMMINENT"
+Calculation Logic:
+
+
+pine
+// rot_pressure: opposition gaining strength
+float rot_pressure =
+    math.min(
+        obs_DecayScore * 0.35 +
+        obs_AbsorptionScore * 0.30 +
+        (convexityScore > 40 ? convexityScore * 0.20 : 0) +
+        (obs_LiquidityScore > 50 ? 15 : 0),
+        100.0)
+
+// rot_controlStability: directional confidence
+float rot_controlStability =
+    math.min(
+        obs_ExpansionScore * 0.40 +
+        (efficiency > effThresh ? 30 : efficiency > effThresh * 0.7 ? 15 : 0) +
+        (ede_state <= 2 ? 30 : ede_state <= 3 ? 15 : 0),
+        100.0)
+
+// rot_transferProbability: synthesis
+float rot_transferProbability =
+    math.min(
+        rot_pressure * 0.50 +
+        (100 - rot_controlStability) * 0.30 +
+        (re_resolutionState == "UNRESOLVED" ? 20 : re_resolutionState == "PARTIALLY RESOLVED" ? 10 : 0),
+        100.0)
+
+// rot_emergingWaveStrength
+float rot_emergingWaveStrength =
+    math.min(
+        obs_DecayScore * 0.40 +
+        (convexityScore > 25 ? convexityScore * 0.30 : 0) +
+        (not (bullImpulse or bearImpulse) and obs_AbsorptionScore > 40 ? 20 : 0),
+        100.0)
+
+// rot_state classification
+string rot_state =
+    rot_transferProbability >= 75 ? "TRANSFER_IMMINENT" :
+    rot_transferProbability >= 50 ? "CONTESTED" :
+    rot_transferProbability >= 25 ? "SOFTENING" : "STABLE"
+Suppression rule (preserved from V71): erf_suppressRotation continues to gate safeToReset at line 2314 exactly as in V71. RIE reads erf_suppressRotation but does not modify the safeToReset gate — that integration is already correct.
+Downstream consumers:
+* TQE (riskLevel computation)
+* MCE (per-timeframe stability input)
+* DOE (bias confidence modifier)
+* Dashboard Advanced panel
+
+PART 4 — MULTI-TIMEFRAME CONSENSUS ENGINE (MCE)
+4.1 Timeframe Stack
+V72 targets a 9-level stack. In PineScript, higher timeframes are accessed via request.security() with the existing tf1 / tf2 input mechanism. The trader configures the stack via inputs:
+
+
+tf_monthly  // Monthly
+tf_weekly   // Weekly
+tf_daily    // Daily (D)
+tf_h4       // H4
+tf_h1       // H1
+tf_m30      // M30
+tf_m15      // M15
+tf_m5       // M5
+tf_m1       // M1 (existing L3 sensor)
+The current L1 (tf1, default 15m) and L2 (tf2, default 60m) map into two slots of the stack. The trader may reconfigure. The MCE treats the full stack uniformly.
+4.2 Per-Timeframe Data Object
+For each timeframe n, the MCE produces:
+
+
+pine
+// Per-timeframe consensus object (9 instances)
+float mce_tf[n]_lifecycle      // 0–100 lifecycle progress score (from l[n]_currentPhase)
+float mce_tf[n]_integrity      // 0–100 wave integrity (from waveModelFit / waveDeviation)
+float mce_tf[n]_confidence     // 0–100 IE1A phase confidence at that TF
+float mce_tf[n]_controlStability  // from RIE rot_controlStability at that TF
+float mce_tf[n]_rotationPressure  // from RIE rot_pressure at that TF
+int   mce_tf[n]_direction      // 1 / -1 / 0
+Lifecycle score maps from phase name to a 0–100 progress integer using the existing phase sequence (Point4Origin=5, Expansion=20, ExpPreConv=35, ExpInduction=50, ExpLiquidity=65, NewHL=80, Absorption=70, Retracement=55, RetrPreConv=40, RetrInduction=25, RetrLiquidity=15, DemandReturn=90, SupplyReturn=90).
+4.3 Consensus Scores
+
+
+pine
+// Alignment score: % of timeframes whose direction agrees with L0
+float mce_alignmentScore =
+    (count of TFs where mce_tf[n]_direction == direction) / 9.0 * 100.0
+
+// HTF Alignment (Monthly → H1): top 5 TFs
+float mce_htfAlignmentScore = weighted mean of top 5 tf lifecycle + direction scores
+
+// MTF Alignment (H1 → M15): middle 3 TFs
+float mce_mtfAlignmentScore = weighted mean of mid 3 TF scores
+
+// Execution Alignment (M30 → M1): bottom 3 TFs
+float mce_execAlignmentScore = weighted mean of bottom 3 TF scores
+4.4 Narrative Generation
+
+
+pine
+string mce_htfNarrative  // What the Monthly→H1 stack says the market is doing
+string mce_mtfNarrative  // What the H1→M15 stack says about the intermediate wave
+string mce_execNarrative // What M30→M1 says about execution timing
+HTF Narrative logic:
+* If mce_htfAlignmentScore >= 80 and direction == 1 → "HTF Bullish Continuation"
+* If mce_htfAlignmentScore >= 80 and direction == -1 → "HTF Bearish Continuation"
+* If mce_htfAlignmentScore >= 60 and rot_transferProbability < 40 → "HTF Trend Intact"
+* If mce_htfAlignmentScore < 40 → "HTF Contested — No Clear Bias"
+* If mce_htfAlignmentScore >= 50 and rot_transferProbability >= 60 → "HTF Rotation Developing"
+Exec Narrative logic:
+* L0 phase == "Demand Return" and mce_execAlignmentScore >= 60 → "Execution Aligned — Long Entry Window"
+* L0 phase == "Supply Return" and mce_execAlignmentScore >= 60 → "Execution Aligned — Short Entry Window"
+* mce_execAlignmentScore < 40 → "Execution Conflict — Wait"
+* Else → "Execution Developing"
+4.5 Downstream Consumers
+* Narrative Engine (primary input)
+* TQE (HTF alignment score)
+* DOE (confidence modifier)
+* Dashboard Standard: mce_htfNarrative + mce_execNarrative visible; per-TF matrix in Advanced
+
+PART 5 — NARRATIVE ENGINE (NE)
+5.1 Purpose
+Produce a single dominant market narrative derived from the MCE consensus and the IE1A lifecycle. Exactly one narrative is active at any time.
+5.2 Permitted Narratives
+Narrative	Conditions
+Bullish Continuation	direction == 1, mce_htfAlignmentScore >= 70, ie1a in {Expansion, NewHL, DemandReturn}, rot_transferProbability < 40
+Bearish Continuation	direction == -1, mce_htfAlignmentScore >= 70, ie1a in {Expansion, NewHL, SupplyReturn}, rot_transferProbability < 40
+Bullish Pullback	direction == 1 at HTF, ie1a_currentPhase in {Retracement, RetrPreConv, RetrInduction, RetrLiquidity, DemandReturn}, mce_htfAlignmentScore >= 55
+Bearish Pullback	direction == -1 at HTF, ie1a_currentPhase in {Retracement, ...}, mce_htfAlignmentScore >= 55
+Bullish Rotation	rot_transferProbability >= 65, direction == -1 (current), mce_htfAlignmentScore >= 50 bullish
+Bearish Rotation	rot_transferProbability >= 65, direction == 1 (current), mce_htfAlignmentScore >= 50 bearish
+Range Development	rot_state == "CONTESTED", abs(mce_alignmentScore - 50) < 15, re_resolutionState == "UNRESOLVED"
+No Clear Narrative	Default when no above condition fires, or conflicts exist
+5.3 Variables
+
+
+pine
+string ne_dominantNarrative  // One of the 8 strings above
+float  ne_narrativeStrength  // 0–100: confidence in the narrative
+bool   ne_narrativeConflict  // true if two narratives within 10 pts of each other
+5.4 Narrative Strength
+
+
+pine
+float ne_narrativeStrength =
+    mce_alignmentScore * 0.40 +
+    (rot_controlStability) * 0.30 +
+    (re_resolutionState == "RESOLVED" ? 30 : re_resolutionState == "PARTIALLY RESOLVED" ? 15 : 0)
+5.5 Downstream Consumers
+* TQE (narrative alignment check)
+* DOE (tradeType derivation)
+* Dashboard Standard Mode: ne_dominantNarrative + ne_narrativeStrength
+
+PART 6 — TRADE QUALIFICATION ENGINE (TQE)
+6.1 Purpose
+A dedicated gate and scoring layer between Narrative and DOE. The TQE takes all intelligence signals and produces a single grade that DOE uses to determine action confidence and risk posture.
+6.2 Inputs
+Input	Source Engine	Weight
+ie1a_phaseConfidence	IE1A	25%
+erf_confidence	ERF	15%
+frz_quality	FRZ (new — see §6.5)	15%
+mce_htfAlignmentScore	MCE	20%
+re_recursiveCompletionScore	RE	10%
+liqSweepConfidence	Existing liquidity engine	15%
+6.3 Unified Quality Model
+
+
+pine
+float tqe_rawScore =
+    ie1a_phaseConfidence    * 0.25 +
+    erf_confidence          * 0.15 +
+    tqe_frzQuality          * 0.15 +
+    mce_htfAlignmentScore   * 0.20 +
+    re_recursiveCompletionScore * 0.10 +
+    tqe_liqQuality          * 0.15
+
+// Grade assignment
+string tqe_grade =
+    tqe_rawScore >= 85 ? "A+" :
+    tqe_rawScore >= 72 ? "A"  :
+    tqe_rawScore >= 58 ? "B"  :
+    tqe_rawScore >= 42 ? "C"  : "D"
+
+// Trade readiness gate: must pass minimum thresholds
+bool tqe_readiness =
+    ie1a_phaseConfidence >= 50 and
+    erf_confidence >= 40 and
+    mce_htfAlignmentScore >= 50 and
+    tqe_grade != "D"
+
+// Risk level
+string tqe_riskLevel =
+    rot_transferProbability > 65 or re_resolutionState == "UNRESOLVED" ? "HIGH" :
+    rot_transferProbability > 35 or tqe_rawScore < 60 ? "MEDIUM" : "LOW"
+6.4 FRZ Quality Sub-Score
+
+
+pine
+// tqe_frzQuality: 0–100, derived from best active FRZ
+float tqe_frzQuality =
+    frz_activeCount > 0 ?
+    math.min(
+        frz_bestScore * 0.50 +
+        (frz_bestTier == "T1" ? 40 : frz_bestTier == "T2" ? 25 : frz_bestTier == "T3" ? 10 : 0) +
+        (frz_bestStatus == "Open" ? 10 : frz_bestStatus == "Partial" ? 5 : 0),
+        100.0) : 0.0
+6.5 Liquidity Quality Sub-Score
+
+
+pine
+float tqe_liqQuality =
+    math.min(
+        obs_LiquidityScore * 0.50 +
+        (liqSweepBull or liqSweepBear ? 30 : 0) +
+        (liqVacuum ? 20 : 0),
+        100.0)
+6.6 Downstream Consumers
+* DOE (primary gate: if !tqe_readiness → doe_action = "Wait")
+* Dashboard Standard: tqe_grade, tqe_riskLevel
+* Dashboard Advanced: full component breakdown
+
+PART 7 — ERF INTEGRATION FRAMEWORK
+7.1 ERF Trade Readiness Score
+Elevates ERF from Level 3 (Advisory) to Level 5 (Decision-Influencing).
+
+
+pine
+// ERF Trade Readiness Score: gates entry and modifies quality
+float erf_tradeReadiness =
+    math.min(
+        (re_resolutionState == "RESOLVED" ? 40 :
+         re_resolutionState == "PARTIALLY RESOLVED" ? 25 : 10) +
+        re_recursiveCompletionScore * 0.25 +
+        (100 - re_residualEnergyScore) * 0.20 +  // low residual = energy delivered
+        erf_confidence * 0.15,
+        100.0)
+7.2 ERF Entry Gate
+Add to longSignal / shortSignal boolean (in addition to existing conditions):
+
+
+pine
+bool erf_entryGate =
+    re_resolutionState != "UNRESOLVED" or  // allow if some resolution
+    (re_resolutionState == "UNRESOLVED" and erf_tradeReadiness >= 60)
+    // UNRESOLVED + low readiness = block entry
+
+// Modified entry signal:
+bool longSignal = [existing conditions] and erf_entryGate
+bool shortSignal = [existing conditions] and erf_entryGate
+7.3 ERF Confidence Influence
+
+
+pine
+// erf_confidence now modifies tqe_rawScore (via TQE weight — §6.2)
+// erf_confidence now displayed with threshold line at 40 in dashboard
+7.4 ERF Quality Influence
+erf_confidence and re_recursiveCompletionScore are weighted inputs to tqe_rawScore. This closes the loop: when ERF confidence is low (dissipation incomplete), TQE grade degrades, DOE confidence degrades, and doe_action may flip from "Long" to "Wait."
+7.5 ERF Display Additions (Standard Mode)
+* Surface erf_tradeReadiness as a single bar in Standard dashboard
+* Surface eae_primaryAttractorPrice as numeric price (currently only label shown — critical fix)
+* Surface eae_secondaryAttractorPrice as TP2 candidate
+
+PART 8 — FRZ INTEGRATION FRAMEWORK
+8.1 FRZ as Entry Qualifier
+FRZ transitions from display-only to a gate on entry quality.
+
+
+pine
+// Is the current price within or approaching a FRZ?
+bool frz_inProximity = frz_activeCount > 0 and
+    math.abs(close - frz_bestZoneMid) / atr < 2.0
+
+// If price is inside a bullish FRZ and direction == 1 → quality bonus
+// If price is inside a bearish FRZ and direction == -1 → quality bonus
+float frz_entryBonus =
+    frz_inProximity and frz_bestDir == direction ? 15.0 : 0.0
+// Added to tqe_rawScore via tqe_frzQuality
+8.2 FRZ Distance Field (New Calculation)
+
+
+pine
+float frz_distanceToZone =  // in ATR units
+    frz_activeCount > 0 ?
+    math.abs(close - frz_bestZoneMid) / atr : na
+Surface in Dashboard as "Distance: X.X ATR" — this resolves the PARTIAL DISPLAY VIOLATION identified in Audit 10 §4.
+8.3 FRZ Effect on Targets
+The best active FRZ (by score, not recency) becomes a target candidate. FRZ zones above price = TP candidate for longs. Zones below price = TP candidate for shorts. Consumed by Target Engine.
+
+
+pine
+float frz_longTP_candidate = // highest-score bullish FRZ above close
+float frz_shortTP_candidate = // highest-score bearish FRZ below close
+8.4 FRZ Effect on Confidence
+tqe_frzQuality feeds into tqe_rawScore → feeds doe_confidence. High-quality FRZ in proximity raises overall confidence.
+8.5 FRZ Prioritization Fix
+Zones display sorted by frz_scoreArr descending (best first), not by recency. T1 zones are pinned. This resolves the recency-sort violation identified in Audit 10.
+
+
+pine
+// Re-sort frz display arrays by score before rendering
+// T1 zones: highlighted with distinct color (e.g., gold border)
+// T4 zones: rendered with reduced opacity
+8.6 FRZ Confidence Score (New)
+
+
+pine
+float frz_confidence =  // distinct from frz_score
+    frz_bestScore * 0.40 +
+    (frz_bestStatus == "Open" ? 30 : frz_bestStatus == "Partial" ? 15 : 0) +
+    (frz_bestTier == "T1" ? 30 : frz_bestTier == "T2" ? 20 : 10)
+
+PART 9 — FRZ ↔ ERF UNIFICATION MODEL
+9.1 Conceptual Relationship
+FRZ and ERF describe the same energy phenomenon from different perspectives:
+* ERF tracks energy that has been accumulated and must be delivered and resolved. It answers: Is the current wave's energy still unresolved?
+* FRZ marks price zones where previous delivery was incomplete — zones to which price must return to complete resolution. It answers: Where does unresolved energy need to go?
+Together: ERF tells you energy is outstanding. FRZ tells you where the market must travel to resolve it.
+9.2 Formal Linkage Variables
+
+
+pine
+// frz_resolutionScore: how much of the FRZ's embedded energy has been resolved
+// Calculated by cross-referencing FRZ age and RE resolution state
+float frz_resolutionScore =
+    re_resolutionState == "RESOLVED" ? 90.0 :
+    re_resolutionState == "PARTIALLY RESOLVED" ?
+        50.0 + re_recursiveCompletionScore * 0.40 :
+    20.0 + ede_dissipationProgress * 0.30
+
+// frz_residualEnergy: energy still embedded in the zone (inverse of resolution)
+float frz_residualEnergy =
+    math.max(0, 100.0 - frz_resolutionScore)
+
+// frz_attractorWeight: how strongly this FRZ functions as a price attractor
+// Zones with high residual energy attract price; fully resolved zones do not
+float frz_attractorWeight =
+    frz_residualEnergy * 0.50 +
+    frz_bestScore * 0.30 +
+    (frz_bestStatus == "Open" ? 20 : frz_bestStatus == "Partial" ? 10 : 0)
+9.3 Resolution Nodes ↔ FRZ Relationship
+Concept	Current State	V72 Linkage
+Resolution Nodes (re_nodeOpen/Closed)	Scalar booleans — track whether current wave's node is open or closed	A newly opened Resolution Node (re_nodeOpen = true) at a price level checks whether an FRZ exists within ATR×1.0 of that level. If yes, that FRZ is tagged as a Resolution Node Candidate.
+FRZ as Attractor	FRZ carries no energy metadata	frz_attractorWeight now makes FRZ zones sortable by their energy draw
+Convergence event	No concept	When eae_primaryAttractorPrice is within ATR×0.5 of an active FRZ top/bottom → frz_attractorConvergence = true — highest-priority target signal in system
+9.4 Convergence Signal
+
+
+pine
+bool frz_attractorConvergence =
+    frz_activeCount > 0 and
+    math.abs(eae_primaryAttractorPrice - frz_bestZoneMid) / atr < 0.5
+
+// When frz_attractorConvergence = true:
+// → te_tp1 confidence promoted to 90+
+// → tqe_grade promoted by one letter
+// → doe_confidence cap raised from 80 to 95
+
+PART 10 — TARGET ENGINE (TE)
+10.1 Purpose
+Convert EAE attractors and FRZ zones into three named, prioritised, priced trade targets.
+10.2 Target Hierarchy
+
+
+TP1 ← Secondary Attractor (eae_secondaryAttractorPrice)
+       OR nearest high-score FRZ above/below price
+TP2 ← Primary Attractor (eae_primaryAttractorPrice)
+TP3 ← Tertiary/Extended Attractor (eae_tertiaryAttractorPrice — new)
+       OR furthest high-score FRZ
+Rationale: The secondary attractor is the nearer, more likely resolution target; the primary is the full-energy destination; the tertiary is the maximum extension. This ordering is directionally consistent with energy theory: energy first partially resolves (TP1), then fully resolves (TP2), then extensions form (TP3).
+10.3 Variables
+
+
+pine
+float te_tp1              // Price level — TP1
+float te_tp2              // Price level — TP2
+float te_tp3              // Price level — TP3
+float te_tp1_quality      // 0–100: confidence TP1 is reachable
+float te_tp2_quality      // 0–100: confidence TP2 is reachable
+float te_tp3_quality      // 0–100: confidence TP3 is reachable
+string te_expectedPath    // "Direct" | "Retracement First" | "Range Then Breakout"
+float te_tp1_confidence   // % probability price reaches TP1 before invalidation
+10.4 Target Quality Calculation
+
+
+pine
+float te_tp1_quality =
+    math.min(
+        eae_secondaryAttractorScore * 0.40 +
+        (frz_attractorConvergence ? 40 : frz_bestScore * 0.25) +
+        re_recursiveCompletionScore * 0.15 +
+        mce_execAlignmentScore * 0.20,
+        100.0)
+
+float te_tp2_quality =
+    math.min(
+        eae_primaryAttractorScore * 0.50 +
+        re_residualEnergyScore * 0.30 +     // high residual = strong pull to TP2
+        mce_htfAlignmentScore * 0.20,
+        100.0)
+
+float te_tp3_quality =
+    math.min(
+        (eae_tertiaryAttractorScore > 0 ? eae_tertiaryAttractorScore * 0.60 : 20.0) +
+        (mce_htfAlignmentScore >= 80 ? 40 : mce_htfAlignmentScore * 0.30),
+        100.0)
+10.5 Expected Path
+
+
+pine
+string te_expectedPath =
+    re_resolutionState == "RESOLVED" and mce_execAlignmentScore >= 70 ? "Direct" :
+    ie1a_currentPhase == "Demand Return" or ie1a_currentPhase == "Supply Return" ? "Direct" :
+    rot_transferProbability > 50 ? "Retracement First" :
+    re_resolutionState == "UNRESOLVED" ? "Range Then Breakout" : "Direct"
+10.6 Tertiary Attractor (New Engine Output in EAE)
+
+
+pine
+// Add to EAE (no lifecycle modification — pure price level calculation):
+float eae_tertiaryAttractorPrice =
+    direction == 1 ?
+        math.max(eae_primaryAttractorPrice, eae_secondaryAttractorPrice) + atr * 2.0 :
+        math.min(eae_primaryAttractorPrice, eae_secondaryAttractorPrice) - atr * 2.0
+
+float eae_tertiaryAttractorScore =
+    re_residualEnergyScore * 0.30 +
+    (mce_htfAlignmentScore >= 75 ? 40 : mce_htfAlignmentScore * 0.30) +
+    (re_resolutionState == "RESOLVED" ? 30 : 10)
+
+PART 11 — INVALIDATION ENGINE (IE2)
+11.1 Purpose
+Pre-calculate the price levels at which each trade thesis fails. The trader sees the stop level before entering — not just an internal boolean that fires after invalidation.
+11.2 Invalidation Types
+Type	Trigger	Price Level
+Bullish Origin Failure	Long thesis fails	point4OriginLow - ATR×0.25
+Bearish Origin Failure	Short thesis fails	point4OriginHigh + ATR×0.25
+Demand Failure	Demand Return invalidated	Demand zone bottom - ATR×0.10
+Supply Failure	Supply Return invalidated	Supply zone top + ATR×0.10
+11.3 Variables
+
+
+pine
+float inv_bullOriginPrice    // Stop level for long trades — origin low with buffer
+float inv_bearOriginPrice    // Stop level for short trades — origin high with buffer
+float inv_demandFailPrice    // Demand zone failure level
+float inv_supplyFailPrice    // Supply zone failure level
+float inv_activeStop         // Currently active stop (matches trade direction)
+bool  inv_invalidated        // true when close has crossed inv_activeStop
+float inv_riskInPts          // Distance from doe_entryZone.mid to inv_activeStop (absolute)
+float inv_riskInATR          // inv_riskInPts / atr
+11.4 Calculation
+
+
+pine
+float inv_bullOriginPrice =
+    point4OriginLow - atr * 0.25
+
+float inv_bearOriginPrice =
+    point4OriginHigh + atr * 0.25
+
+float inv_demandFailPrice =
+    direction == 1 and closeInside ?
+    (ie1a_currentPhase == "Demand Return" ?
+     cycleHigh - (cycleHigh - cycleLow) * 0.60 - atr * 0.10 :  // approximate demand zone low
+     inv_bullOriginPrice) : na
+
+float inv_supplyFailPrice =
+    direction == -1 and closeInside ?
+    cycleHigh + atr * 0.10 : na   // approximate supply zone high
+
+float inv_activeStop =
+    direction == 1 ?
+        math.min(inv_bullOriginPrice, nz(inv_demandFailPrice, inv_bullOriginPrice)) :
+    direction == -1 ?
+        math.max(inv_bearOriginPrice, nz(inv_supplyFailPrice, inv_bearOriginPrice)) : na
+
+bool inv_invalidated = not na(inv_activeStop) and
+    (direction == 1 ? close < inv_activeStop : close > inv_activeStop)
+
+float inv_riskInPts = math.abs(close - inv_activeStop)
+float inv_riskInATR = inv_riskInPts / atr
+11.5 Risk-Reward Integration
+
+
+pine
+// R:R ratio for TP1, TP2, TP3
+float te_rr_tp1 = math.abs(te_tp1 - close) / inv_riskInPts
+float te_rr_tp2 = math.abs(te_tp2 - close) / inv_riskInPts
+float te_rr_tp3 = math.abs(te_tp3 - close) / inv_riskInPts
+
+// Gate: if R:R to TP1 < 1.5, degrade tqe_grade by one level
+bool te_rrGate = te_rr_tp1 >= 1.5
+
+PART 12 — DECISION OUTPUT ENGINE (DOE)
+12.1 Purpose
+The single authority on what the trader should do. Consumes all upstream engine outputs. Produces one unified recommendation object. Resolves the three-competing-directives problem in V71.
+12.2 Output Variables
+
+
+pine
+string doe_bias          // "Strong Bullish" | "Bullish" | "Neutral" | "Bearish" | "Strong Bearish"
+string doe_action        // "Long" | "Short" | "Wait" | "No Trade"
+float  doe_confidence    // 0–100%
+string doe_tradeType     // "Continuation" | "Pullback" | "Rotation" | "Breakout" | "Range"
+float  doe_entryMid      // Entry price midpoint
+float  doe_entryHigh     // Entry zone top
+float  doe_entryLow      // Entry zone bottom
+string doe_entryTrigger  // "Market" | "Limit" | "LimitOnRetest"
+string doe_entryQuality  // "A+" | "A" | "B" | "C" | "D" (mirrors tqe_grade)
+12.3 Bias Logic
+
+
+pine
+string doe_bias =
+    direction == 1 and mce_htfAlignmentScore >= 75 and rot_controlStability >= 65 ?
+        "Strong Bullish" :
+    direction == 1 and mce_htfAlignmentScore >= 50 ?
+        "Bullish" :
+    direction == -1 and mce_htfAlignmentScore >= 75 and rot_controlStability >= 65 ?
+        "Strong Bearish" :
+    direction == -1 and mce_htfAlignmentScore >= 50 ?
+        "Bearish" : "Neutral"
+12.4 Action Logic
+
+
+pine
+string doe_action =
+    // Gate 1: TQE readiness
+    not tqe_readiness ? "Wait" :
+    // Gate 2: ERF entry gate
+    not erf_entryGate ? "Wait" :
+    // Gate 3: R:R gate
+    not te_rrGate ? "Wait" :
+    // Gate 4: Invalidation — do not enter if already invalidated
+    inv_invalidated ? "No Trade" :
+    // Entry conditions
+    ie1a_currentPhase == "Demand Return" and direction == 1 ? "Long" :
+    ie1a_currentPhase == "Supply Return" and direction == -1 ? "Short" :
+    // Rotation setup
+    rot_transferProbability >= 75 and ne_dominantNarrative in {"Bullish Rotation"} ? "Long" :
+    rot_transferProbability >= 75 and ne_dominantNarrative in {"Bearish Rotation"} ? "Short" :
+    "Wait"
+12.5 Confidence
+
+
+pine
+float doe_confidence =
+    math.min(
+        tqe_rawScore * 0.40 +
+        mce_alignmentScore * 0.25 +
+        (frz_attractorConvergence ? 20 : tqe_frzQuality * 0.15) +
+        ie1a_phaseConfidence * 0.20,
+        frz_attractorConvergence ? 95.0 : 88.0)  // hard cap (humility ceiling)
+12.6 Trade Type
+
+
+pine
+string doe_tradeType =
+    ne_dominantNarrative in {"Bullish Continuation", "Bearish Continuation"} ? "Continuation" :
+    ne_dominantNarrative in {"Bullish Pullback", "Bearish Pullback"} ? "Pullback" :
+    ne_dominantNarrative in {"Bullish Rotation", "Bearish Rotation"} ? "Rotation" :
+    ne_dominantNarrative == "Range Development" ? "Range" :
+    ie1a_currentPhase == "New High" or ie1a_currentPhase == "New Low" ? "Breakout" : "Wait"
+12.7 Entry Zone
+
+
+pine
+// Entry zone derived from FRZ best zone or IE1A Demand/Supply zone
+float doe_entryMid =
+    frz_inProximity and frz_bestDir == direction ?
+        (frz_bestTop + frz_bestBot) / 2.0 :
+    ie1a_currentPhase == "Demand Return" ?
+        (point4OriginHigh + point4OriginLow) / 2.0 :
+    ie1a_currentPhase == "Supply Return" ?
+        (ie1a_inductionExtreme + ie1a_inductionOrigin) / 2.0 :
+    close
+
+float doe_entryHigh = doe_entryMid + atr * 0.30
+float doe_entryLow  = doe_entryMid - atr * 0.30
+
+string doe_entryTrigger =
+    frz_inProximity ? "Limit" :
+    ie1a_currentPhase in {"Demand Return", "Supply Return"} ? "LimitOnRetest" :
+    "Market"
+
+PART 13 — WAVE REGISTRY (WR)
+13.1 Formal Wave Object
+Each wave spawn increments a sequential waveId counter. Parent-child lineage is tracked via the registry.
+
+
+pine
+// Wave Registry — parallel arrays (PineScript has no structs)
+var array<int>    wr_waveId          // Sequential ID, auto-incremented on wave spawn
+var array<int>    wr_parentWaveId    // waveId of parent (0 = root wave)
+var array<int>    wr_rootWaveId      // waveId of root wave in the lineage
+var array<int>    wr_birthBar        // bar_index when wave spawned
+var array<int>    wr_deathBar        // bar_index when wave terminated (-1 if active)
+var array<string> wr_phaseHistory    // comma-separated list of phases in lifecycle order
+var array<float>  wr_peakEnergy      // max ede_expansionEnergy during this wave's life
+var array<float>  wr_resolutionScore // re_recursiveCompletionScore at wave death
+var array<int>    wr_waveDepth       // 0=root, 1=child, 2=grandchild, 3=great-grandchild
+
+// Active wave tracking
+var int wr_nextId = 1
+var int wr_activeWaveId = 0
+var int wr_activeParentId = 0
+var int wr_activeRootId = 0
+On wave spawn (existing waveReset logic):
+
+
+pine
+// Add to wave spawn block:
+int new_id = wr_nextId
+wr_nextId := wr_nextId + 1
+wr_waveId.push(new_id)
+wr_parentWaveId.push(wr_activeWaveId)  // current active becomes parent
+wr_rootWaveId.push(isRecursiveWave ? wr_activeRootId : new_id)  // root = self if depth 0
+wr_birthBar.push(bar_index)
+wr_deathBar.push(-1)
+wr_phaseHistory.push(ie1a_currentPhase)
+wr_peakEnergy.push(ede_expansionEnergy)
+wr_resolutionScore.push(0.0)
+wr_waveDepth.push(isRecursiveWave ? entryCycle : 0)
+wr_activeWaveId := new_id
+wr_activeRootId := isRecursiveWave ? wr_activeRootId : new_id
+On wave death:
+
+
+pine
+// Update deathBar and final resolutionScore for the dying wave:
+int dying_idx = wr_waveId.indexof(wr_activeWaveId)
+if dying_idx >= 0
+    wr_deathBar.set(dying_idx, bar_index)
+    wr_resolutionScore.set(dying_idx, re_recursiveCompletionScore)
+
+PART 14 — DELIVERY WAVE REGISTRY (DWR)
+14.1 Purpose
+A formal typed object tracking delivery wave lineage — resolving the Severity 2 gap identified in Audit 2 §3.
+14.2 Delivery Wave Object
+A DeliveryWave is spawned when ede_state transitions to 4 (Liquidity phase) or 5 (NewHL/Delivering).
+
+
+pine
+// DeliveryWave Registry — parallel arrays
+var array<int>    dwr_waveId          // Sequential ID
+var array<int>    dwr_parentWaveId    // Parent delivery wave (0 = first delivery)
+var array<int>    dwr_rootWaveId      // Root wave from Wave Registry
+var array<int>    dwr_startBar
+var array<int>    dwr_endBar          // -1 if still active
+var array<float>  dwr_energy          // ede_expansionEnergy at spawn
+var array<string> dwr_resolutionState // UNRESOLVED / PARTIALLY RESOLVED / RESOLVED
+var array<int>    dwr_entryCycle      // Which entryCycle spawned this delivery
+var array<string> dwr_children        // comma-separated child dwr_waveIds
+
+// Recursive lineage string: "root→parent→self" for dashboard traceability
+var array<string> dwr_lineage
+Spawn condition:
+
+
+pine
+bool dwr_shouldSpawn =
+    (ede_state == 4 and ede_state[1] != 4) or    // entered Liquidity
+    (ede_liquidationBecomingDirectional and not ede_liquidationBecomingDirectional[1])
+
+if dwr_shouldSpawn
+    // create new DWR entry, link to current wr_activeWaveId as rootWaveId
+Resolution tracking (per bar):
+
+
+pine
+if dwr_activeDeliveryId > 0
+    int idx = dwr_waveId.indexof(dwr_activeDeliveryId)
+    if idx >= 0
+        dwr_resolutionState.set(idx, re_resolutionState)
+        if re_resolutionState == "RESOLVED"
+            dwr_endBar.set(idx, bar_index)
+
+PART 15 — TRACEABILITY FRAMEWORK
+15.1 Decision → Root Lineage
+Every DOE recommendation must be traceable to a root wave. The chain:
+
+
+doe_action (DOE)
+    ↓ derived from
+tqe_grade (TQE)
+    ↓ weighted by
+ie1a_phaseConfidence + erf_confidence + mce_htfAlignmentScore + frz_quality
+    ↓ phase source
+ie1a_currentPhase (IE1A) → wr_activeWaveId (Wave Registry)
+    ↓ parent
+wr_parentWaveId → wr_rootWaveId
+    ↓ delivery
+dwr_activeDeliveryId (DWR) → dwr_rootWaveId → dwr_lineage
+15.2 Traceability Variables
+
+
+pine
+string trc_decisionSource     // "IE1A:DemandReturn | TQE:A+ | Narrative:BullishPullback"
+string trc_waveChain          // "Wave#3 (child of #1, root #1)"
+string trc_deliveryChain      // "Delivery#2 (child of #1)"
+string trc_confidenceBreakdown // "IE1A:75 ERF:68 FRZ:82 MCE:71 RE:80 LIQ:65"
+These are computed strings for dashboard consumption — no new computation, just formatted concatenation of existing values.
+15.3 Dashboard Traceability Panel (Advanced Mode)
+Replaces/extends the current P3 wave lineage display with:
+* Decision Source (which engine fired the recommendation)
+* Wave Chain (waveId → parentWaveId → rootWaveId with bar numbers)
+* Delivery Chain (DWR lineage)
+* Confidence Breakdown (component-by-component TQE score)
+
+PART 16 — DASHBOARD ARCHITECTURE (V72)
+16.1 Design Principle
+V72 dashboard solves Audit 10's core finding: 88% diagnostic / 12% decision ratio inverted to 50% decision / 50% diagnostic, with diagnostic depth gated behind Advanced Mode.
+16.2 Standard Mode (Default — Always Visible)
+Panel COMMAND (top_right) — replaces current Panel A
+Field	Source	Type
+Market Bias	doe_bias	Decision
+Market Narrative	ne_dominantNarrative	Decision
+Narrative Strength	ne_narrativeStrength (bar)	Decision-support
+Recommended Action	doe_action	Decision
+Confidence	doe_confidence (%)	Decision
+Trade Type	doe_tradeType	Decision
+Entry Zone	doe_entryLow – doe_entryHigh	Decision
+Entry Trigger	doe_entryTrigger	Decision
+Trade Quality	tqe_grade	Decision
+Risk Level	tqe_riskLevel	Decision
+TP1	te_tp1 (price)	Decision
+TP2	te_tp2 (price)	Decision
+TP3	te_tp3 (price, if te_tp3_quality >= 40)	Decision
+Stop	inv_activeStop (price)	Decision
+R:R to TP1	te_rr_tp1	Decision
+Wave Phase	ie1a_currentPhase + ie1a_phaseConfidence	Diagnostic (1 row)
+ERF Readiness	erf_tradeReadiness (bar)	Decision-support
+FRZ Distance	frz_distanceToZone ATR	Decision-support
+Primary Attractor	eae_primaryAttractorLabel + price	Decision-support
+Attractor Convergence	frz_attractorConvergence (flag)	Decision-support
+Standard mode removes: All belief distributions, proximity scores, physics observer rows, hypothesis engine, rotation suppression internals, consensus scoring detail, recursive completion internals, duplicate fields.
+16.3 Advanced Mode (Toggle — Diagnostic Depth)
+Panel DIAGNOSTIC (previously Panel B + Panel C merged)
+* All belief distributions
+* Physics observer scores
+* Proximity scores
+* Hypothesis engine (legacy — marked DEPRECATED, greyed)
+* Wave deviation / integrity
+* Bayesian prob + model confidence raw
+Panel MARKET INTELLIGENCE (previously P3)
+* RIE: rot_pressure, rot_transferProbability, rot_state
+* MCE: per-timeframe matrix (direction + lifecycle + confidence for each TF)
+* MCE: mce_htfNarrative, mce_mtfNarrative
+* Consensus alignment scores
+* Dominance + fractal confidence
+* Execution probability breakdown
+Panel ERF DEEP (previously ERF panel)
+* All EDE variables
+* RE variables
+* EAE secondary and tertiary attractor (price + score — currently invisible)
+* Resolution nodes (re_nodeOpen / re_nodeClosed as explicit rows)
+* Delivery space score
+* erf_dissipationConfidence
+Panel TRACEABILITY
+* trc_decisionSource
+* trc_waveChain
+* trc_deliveryChain
+* trc_confidenceBreakdown
+* Wave Registry: wr_activeWaveId, wr_parentWaveId, wr_rootWaveId, wr_waveDepth
+Panel FRZ DEEP
+* Full zone table (sorted by score, T1 pinned)
+* frz_confidence per zone
+* frz_distanceToZone per zone
+* frz_resolutionScore per zone
+* frz_residualEnergy per zone
+* frz_attractorWeight per zone
+* frz_attractorConvergence flag
+16.4 Duplicate Field Resolution
+The following V71 duplicate conflicts are resolved in V72:
+Conflict	V72 Resolution
+directiveStr vs liveDirective vs execDirective	doe_action is the single action string. liveDirective → rie_controlDirective in Advanced. execDirective → mce_execReadiness in Advanced.
+L0 Phase duplicated in Panel A and Panel C Narrative	Standard shows ie1a_currentPhase once (in COMMAND panel). Advanced shows die_narrativeDir if needed.
+Expected Next/Probability in Panel A and Panel C	Standard: one "Next Expected" row in COMMAND panel. Advanced: full prediction panel.
+Physics Consensus in Panel B and Panel C	Standard: none. Advanced: once in DIAGNOSTIC.
+Active FU Blocks in Panel C and Panel FU	Standard: none. Advanced: FU panel only.
+Energy State in Panel A and ERF	Standard: erf_tradeReadiness bar. Advanced: ERF DEEP shows all state strings.
+Resolution State in Panel A and ERF	Advanced: ERF DEEP only.
+Fractal Conf duplicated left/right in P3	Advanced: shown once, right column only.
+Active Phase duplicated Panel A and P3	Standard: once in COMMAND.
+Capacity Score in P3 and Panel B	Advanced: MARKET INTELLIGENCE only.
+Net result: Standard mode: ~20 fields (all decision-grade). Advanced mode: ~75+ fields (diagnostic depth on demand). Total dashboard clarity: Standard = 100% decision fields; Advanced = 100% diagnostic fields (no mixing).
+16.5 Mode Toggle
+
+
+pine
+// Single boolean input — Standard vs Advanced
+bool dashAdvancedMode = input.bool(false, "Advanced Mode (Diagnostic)", group="Dashboard")
+// All Advanced panels gate on dashAdvancedMode
+// Standard COMMAND panel always visible
+
+PART 17 — IMPLEMENTATION ROADMAP
+Phase 1 — Decision Completeness (Highest Trading Impact)
+Target: Transform from observer to decision system
+Task	Variables	Lines Affected	Priority
+Surface eae_primaryAttractorPrice as numeric in dashboard	1 line fix in dashboard	~line 3960	P0
+Surface eae_secondaryAttractorPrice as dashboard row	2–3 lines	~line 4000 area	P0
+Implement inv_activeStop, inv_bullOriginPrice, inv_bearOriginPrice	~20 lines	New section	P0
+Implement Target Engine (TE): te_tp1, te_tp2, te_tp3	~40 lines	New section	P0
+Implement doe_entryMid/High/Low and doe_entryTrigger	~25 lines	New section	P0
+Implement doe_bias, doe_action, doe_confidence, doe_tradeType	~50 lines	New DOE section	P0
+Implement erf_tradeReadiness and erf_entryGate	~30 lines	After ERF section	P1
+Implement frz_distanceToZone and frz_confidence	~15 lines	After FRZ section	P1
+Fix FRZ sort order (score-first, not recency-first)	~10 lines	Section 20	P1
+Phase 2 — Intelligence Integration (Architectural Completeness)
+Task	Variables	Lines Affected	Priority
+Implement TQE: tqe_rawScore, tqe_grade, tqe_readiness, tqe_riskLevel	~60 lines	New TQE section	P1
+Implement NE: ne_dominantNarrative, ne_narrativeStrength	~50 lines	New NE section	P1
+Implement RIE: rot_pressure, rot_controlStability, rot_transferProbability, rot_state	~50 lines	New RIE section	P2
+Implement MCE 9-level stack + mce_htfNarrative, mce_execNarrative	~80 lines	Extend MTF section	P2
+Implement FRZ ↔ ERF unification: frz_resolutionScore, frz_residualEnergy, frz_attractorWeight, frz_attractorConvergence	~40 lines	After FRZ section	P2
+Implement eae_tertiaryAttractorPrice / Score	~15 lines	EAE section	P2
+Implement te_rr_tp1/2/3 and R:R gate	~20 lines	TE section	P2
+Phase 3 — Registry and Traceability
+Task	Variables	Lines Affected	Priority
+Implement Wave Registry (WR) parallel arrays + spawn/death hooks	~70 lines	Wave spawn sections	P3
+Implement DeliveryWave Registry (DWR)	~60 lines	New DWR section	P3
+Implement trc_* traceability strings	~30 lines	New TRC section	P3
+Phase 4 — Dashboard Restructure
+Task	Lines Affected	Priority
+Build Standard Mode COMMAND panel (20 decision fields)	~150 lines	New dashboard section
+Move all diagnostic panels behind dashAdvancedMode flag	~200 line edits	All dashboard sections
+Implement Advanced Mode toggle with per-panel gates	~30 lines	Dashboard inputs
+Add T1 FRZ pinning and score-sort to FRZ panel	~20 lines	Section 20
+Add TRACEABILITY panel to Advanced Mode	~80 lines	New section
+PART 18 — V72 COMPLETE ARCHITECTURE DIAGRAM
+
+
+Market Price Data
+       │
+       ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  PHYSICS LAYER (unchanged)                                          │
+│  obs_ExpansionScore, obs_DecayScore, obs_CurvatureScore,           │
+│  obs_AbsorptionScore, obs_LiquidityScore, efficiency,              │
+│  convexityScore, bullImpulse, bearImpulse                          │
+└─────────────────────────────────────────────────────────────────────┘
+       │
+       ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  ENGINE 1A — LIFECYCLE AUTHORITY (unchanged, sole owner)            │
+│  ie1a_currentPhase, ie1a_phaseConfidence, ie1a_hypFamily           │
+│  ie1a_bos1Active, ie1a_bos2Active, ie1a_inductionExtreme           │
+│  ie1a_inductionOriginBroken, direction, erf_suppressRotation       │
+└─────────────────────────────────────────────────────────────────────┘
+       │
+       ├──────────────────────┬──────────────────────┐
+       ▼                      ▼                      ▼
+┌──────────────┐   ┌─────────────────┐   ┌─────────────────────────┐
+│  ERF LAYER   │   │  FRZ ENGINE     │   │  ROTATION INTELLIGENCE  │
+│  (extended)  │   │  (integrated)   │   │  ENGINE 2 (new)         │
+│              │   │                 │   │                         │
+│ EDE: state   │   │ frz_arrays      │   │ rot_pressure            │
+│ RE: resol.   │   │ frz_bestScore   │   │ rot_controlStability    │
+│ EAE: attract │   │ frz_distance    │   │ rot_transferProbability │
+│ erf_readiness│   │ frz_confidence  │   │ rot_emergingStrength    │
+│ erf_entryGate│   │ frz_residualE   │   │ rot_state               │
+│ eae_tertiary │   │ frz_attractorW  │   │                         │
+└──────┬───────┘   └────────┬────────┘   └───────────┬─────────────┘
+       │                    │                         │
+       └──────────┬─────────┘                         │
+                  ▼                                   │
+       ┌──────────────────────┐                       │
+       │  FRZ ↔ ERF UNIFIER   │                       │
+       │  frz_resolutionScore │                       │
+       │  frz_residualEnergy  │                       │
+       │  frz_attractorWeight │                       │
+       │  frz_attractorConv.  │                       │
+       └──────────┬───────────┘                       │
+                  │            ┌──────────────────────┘
+                  ▼            ▼
+       ┌───────────────────────────────────────────────────────────┐
+       │  MULTI-TIMEFRAME CONSENSUS ENGINE (MCE) — 9 timeframes    │
+       │  mce_tf[n]_lifecycle, mce_tf[n]_integrity,               │
+       │  mce_tf[n]_confidence, mce_alignmentScore                │
+       │  mce_htfNarrative, mce_mtfNarrative, mce_execNarrative   │
+       └───────────────────────────┬───────────────────────────────┘
+                                   │
+                                   ▼
+                       ┌───────────────────────┐
+                       │  NARRATIVE ENGINE (NE) │
+                       │  ne_dominantNarrative  │
+                       │  ne_narrativeStrength  │
+                       │  ne_narrativeConflict  │
+                       └───────────┬───────────┘
+                                   │
+                                   ▼
+                    ┌──────────────────────────────┐
+                    │  TRADE QUALIFICATION ENGINE   │
+                    │  (TQE) — Unified Gate        │
+                    │  tqe_rawScore, tqe_grade      │
+                    │  tqe_readiness, tqe_riskLevel │
+                    └──────────────┬───────────────┘
+                                   │
+              ┌────────────────────┼────────────────────┐
+              ▼                    ▼                    ▼
+   ┌──────────────────┐ ┌──────────────────┐ ┌──────────────────────┐
+   │  TARGET ENGINE   │ │ INVALIDATION     │ │ DECISION OUTPUT      │
+   │  (TE)            │ │ ENGINE (IE2)     │ │ ENGINE (DOE)         │
+   │  te_tp1/2/3      │ │ inv_activeStop   │ │ doe_bias             │
+   │  te_quality      │ │ inv_bullOrigin   │ │ doe_action           │
+   │  te_expectedPath │ │ inv_bearOrigin   │ │ doe_confidence       │
+   │  te_rr_tp1/2/3   │ │ inv_riskInATR   │ │ doe_tradeType        │
+   └──────────────────┘ └──────────────────┘ │ doe_entryZone        │
+              │                    │          │ doe_entryTrigger     │
+              └────────────────────┘          └──────────┬───────────┘
+                                                         │
+                    ┌─────────────────────────────────────┤
+                    │       WAVE REGISTRY                 │
+                    │       waveId, parentWaveId          │
+                    │       rootWaveId, phaseHistory      │
+                    │                                     │
+                    │       DELIVERY WAVE REGISTRY        │
+                    │       dw_waveId, dw_lineage         │
+                    │       dw_resolutionState            │
+                    └─────────────────────────────────────┘
+                                        │
+                                        ▼
+                        ┌───────────────────────────────┐
+                        │  DASHBOARD                     │
+                        │                               │
+                        │  STANDARD MODE (~20 fields)    │
+                        │  ─ Market Bias                │
+                        │  ─ Market Narrative           │
+                        │  ─ Recommended Action         │
+                        │  ─ Confidence                 │
+                        │  ─ Trade Type                 │
+                        │  ─ Entry Zone + Trigger       │
+                        │  ─ Trade Quality (Grade)      │
+                        │  ─ Risk Level                 │
+                        │  ─ TP1 / TP2 / TP3            │
+                        │  ─ Stop Level                 │
+                        │  ─ R:R                        │
+                        │  ─ ERF Readiness              │
+                        │  ─ FRZ Distance               │
+                        │  ─ Attractor (price shown)    │
+                        │  ─ Wave Phase (1 row)         │
+                        │                               │
+                        │  ADVANCED MODE (toggle)       │
+                        │  ─ All diagnostic panels      │
+                        │  ─ RIE outputs                │
+                        │  ─ MCE per-TF matrix          │
+                        │  ─ ERF deep                   │
+                        │  ─ FRZ deep + energy          │
+                        │  ─ Traceability chain         │
+                        │  ─ Wave/DWR registries        │
+                        └───────────────────────────────┘
+
+PART 19 — SPEC COMPLIANCE CHECKLIST
+Requirement	Status
+Engine 1A preserved as sole lifecycle authority	✅ — untouched
+BOS as evidence (not direct assignment)	✅ — unchanged
+3D validation (Structure + Momentum + Physics)	✅ — unchanged
+No competing lifecycle models	✅ — RIE explicitly forbidden from phase assignment
+RIE outputs rotation metrics (not phases)	✅ — §3
+MCE supports 9 timeframes	✅ — §4
+Exactly one dominant narrative	✅ — §5
+TQE unified quality model (A+ through D)	✅ — §6
+ERF gates entry signals	✅ — §7.2
+FRZ integrated into decisions	✅ — §8
+FRZ ↔ ERF unified model	✅ — §9
+Tertiary attractor implemented	✅ — §10.6
+TP1/TP2/TP3 from attractor hierarchy	✅ — §10.2
+Bullish/Bearish Origin Failure prices	✅ — §11
+DOE sole authority on recommendation	✅ — §12
+Three competing directives resolved	✅ — §16.4
+Wave Registry with waveId/parentWaveId/rootWaveId	✅ — §13
+DeliveryWave Registry with lineage	✅ — §14
+Decision → Root traceability	✅ — §15
+Dashboard Standard Mode: Bias/Narrative/Action/Confidence/Type/Entry/TP/Stop	✅ — §16.2
+Advanced Mode gates diagnostic fields	✅ — §16.3
+12 confirmed duplicate fields resolved	✅ — §16.4
+No engine duplicates another's authority	✅ — §2
+FRZ sorted by score (not recency)	✅ — §8.5
+Primary attractor price surfaced numerically	✅ — §7.5
+Secondary attractor surfaced in dashboard	✅ — §7.5
+V72 Master Architecture Specification — End of Document Produced for V71-4-ERF__4_.pine (5,790 lines) based on Audit 1–5 and Audit 10 factual ground truth.
